@@ -1,0 +1,12 @@
+[project]
+name = "agent-factory"
+version = "0.1.0"
+description = "Агентная фабрика визуального контента: YAML-бриф → кадры → проверка судьёй → карточки → видео → монтаж, с памятью правил и метриками прогонов."
+requires-python = ">=3.10"
+dependencies = ["pyyaml>=6", "pillow>=10.1"]
+
+[project.scripts]
+factory = "factory.cli:main"
+
+[tool.setuptools]
+packages = ["factory", "factory.agents", "factory.backends"]

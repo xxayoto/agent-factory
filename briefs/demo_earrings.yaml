@@ -1,0 +1,69 @@
+# Демо-бриф: 3 товара, 4 шота, карточки, видео, монтаж с субтитрами.
+# Запуск без затрат: python3 -m factory run briefs/demo_earrings.yaml
+project: demo-earrings
+brand:
+  name: LUMA
+  tagline: jewelry demo
+
+format:            # формат кадра и карточки
+  width: 720
+  height: 960
+
+products:
+  - id: stud-pearl
+    photos: [../examples/assets/stud_pearl.png]
+    tags: [earring-stud, earring]
+    attributes: {earring_type: stud, metal: gold, stone: pearl}
+  - id: hoop-silver
+    photos: [../examples/assets/hoop_silver.png]
+    tags: [earring-hoop, earring]
+    attributes: {earring_type: hoop, metal: silver}
+  - id: stud-crystal
+    photos: [../examples/assets/stud_crystal.png]
+    tags: [earring-stud, earring]
+    attributes: {earring_type: stud, metal: gold, stone: crystal}
+
+references:
+  - id: warm
+    path: ../examples/assets/ref_studio_warm.jpg
+    note: soft warm studio light, beige backdrop
+  - id: cool
+    path: ../examples/assets/ref_studio_cool.jpg
+    note: cool editorial light, deep blue backdrop
+
+shots:
+  - id: s1-pearl-closeup
+    product: stud-pearl
+    reference: warm
+    prompt: close-up portrait in profile, earring in the earlobe, shallow depth of field
+    caption: Жемчуг, который носится каждый день
+    card: {title: ЖЕМЧУГ, subtitle: серьги-гвоздики, rows: ['металл: золото 585', 'камень: жемчуг 7 мм']}
+    video: {motion: slow head turn towards camera, seconds: 3}
+  - id: s2-hoop
+    product: hoop-silver
+    reference: cool
+    prompt: three-quarter portrait, hair tucked behind the ear, hoop clearly visible
+    caption: Серебряные кольца для смелого образа
+    card: {title: КОЛЬЦА, subtitle: серебро 925}
+    video: {motion: hair moves in light wind, seconds: 3}
+  - id: s3-crystal
+    product: stud-crystal
+    reference: warm
+    prompt: macro shot of the ear, crystal catches the light
+    caption: Кристалл ловит свет
+    card: {title: КРИСТАЛЛ, subtitle: серьги-гвоздики, rows: ['металл: золото 585']}
+  - id: s4-pearl-flatlay
+    product: stud-pearl
+    reference: cool
+    prompt: flat lay on silk fabric, pair of earrings, top view
+    caption: LUMA — украшения на каждый день
+
+outputs:
+  cards: true
+  videos: true
+  montage: true
+
+limits:
+  max_retries: 2     # перегенераций после отбраковки
+  workers: 3         # параллельных агентов
+  budget_usd: 1.5    # потолок; в mock — симуляция

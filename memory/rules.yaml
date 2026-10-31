@@ -1,0 +1,13 @@
+# Выученные правила. Сюда пишет оркестратор после отбраковок судьи; можно добавлять руками.
+# Первые правила — из реальных тестовых заданий (октябрь 2026), не из симуляции.
+rules:
+- id: earring-stud.earring_type.stud
+  tag: earring-stud
+  attribute: earring_type
+  expected: stud
+  seen_wrong: [drop]
+  text: серьга-гвоздик не должна превращаться в подвеску
+  prompt_hint: keep earring_type exactly stud, do not turn it into drop
+  hits: 1
+  learned_in: manual (тестовое, Seedream)
+  created: '2026-10-30'

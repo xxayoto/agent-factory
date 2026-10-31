@@ -1,0 +1,24 @@
+# секреты — никогда не коммитим
+.env
+*.key
+api_key
+**/api_key
+secrets/
+config/local.yaml
+
+# результаты прогонов и генерации
+runs/
+outputs/
+*.mp4
+*.mov
+*.wav
+!examples/assets/*.png
+
+# python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# system
+.DS_Store

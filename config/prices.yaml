@@ -1,0 +1,15 @@
+# Цена одной операции, USD. Используется для оценки перед запуском (factory plan),
+# для бюджета и для метрики cost_usd. В mock-режиме деньги не тратятся —
+# цифры помечаются как симуляция. Перед live-прогоном сверить с прайсом провайдера.
+frame:
+  mock: 0.035           # ориентир: Seedream 5 Pro i2i
+  runninghub_seedream: 0.035
+  wavespeed: 0.035
+video:
+  mock: 0.30            # ориентир: i2v 5 с, 720p
+  runninghub_h3: 0.30
+judge:
+  mock: 0.0
+  manual: 0.0
+card: 0.0               # локально, Pillow
+montage: 0.0            # локально, ffmpeg
