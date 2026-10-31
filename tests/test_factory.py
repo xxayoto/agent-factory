@@ -116,6 +116,17 @@ class TestPipeline(Base):
             self.assertTrue(os.path.exists(os.path.join(o.log.dir, f)))
         self.assertTrue(os.path.exists(os.path.join(self.tmp, 'runs', 'index.jsonl')))
 
+    @unittest.skipUnless(have_ffmpeg(), 'нужен ffmpeg')
+    def test_relative_runs_dir(self):
+        cwd = os.getcwd()
+        os.chdir(self.tmp)
+        try:
+            o = Orchestrator(self.brief(cards=False, videos=False, montage=True), 'mock', 0, 'mem.yaml', 'runs')
+            m = o.run()
+        finally:
+            os.chdir(cwd)
+        self.assertTrue(m['montage'])
+
     def test_rejects_go_back_with_feedback(self):
         import json
         for seed in range(10):
@@ -135,6 +146,29 @@ class TestPipeline(Base):
             cold += self.run_mock(seed, mem=f'cold{seed}.yaml')[1]['frames_rejected']
             warm += self.run_mock(seed, mem='warm.yaml')[1]['frames_rejected']
         self.assertLess(warm, cold)
+
+
+class TestJudgeEval(Base):
+    def test_mock_judge_eval_has_known_truth(self):
+        from factory import evals
+        m, rows, out = evals.run(self.brief(), 'mock', 10, os.path.join(self.tmp, 'runs'), seed=3)
+        self.assertEqual(m['defective'] + m['clean'], 10)
+        self.assertGreater(m['defective'], 0)
+        self.assertEqual((m['attribute_accuracy'], m['defect_recall'], m['false_reject_rate']), (1.0, 1.0, 0.0))
+        self.assertTrue(os.path.exists(os.path.join(self.tmp, 'runs', 'judge_evals.jsonl')))
+
+    def test_defect_is_drawn_not_written(self):
+        from factory.backends.render import earrings
+        stud = earrings({'earring_type': 'stud', 'metal': 'gold', 'stone': 'pearl'})
+        drop = earrings({'earring_type': 'drop', 'metal': 'gold', 'stone': 'pearl'})
+        self.assertNotEqual(stud.getbbox(), drop.getbbox())  # у подвески выше рамка — дефект виден глазами
+
+    def test_claude_judge_schema(self):
+        from factory.backends.claude_judge import VOCAB, schema
+        sc = schema(['earring_type', 'metal', 'engraving'], VOCAB)
+        self.assertEqual(sc['properties']['earring_type']['enum'], ['stud', 'hoop', 'drop'])
+        self.assertEqual(sc['properties']['engraving'], {'type': 'string'})
+        self.assertIn('notes', sc['required'])
 
 
 class TestSubtitles(unittest.TestCase):

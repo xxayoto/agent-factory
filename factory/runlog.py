@@ -56,6 +56,8 @@ def render_report(m):
         f"- доля брака: {m['reject_rate']:.0%}, с первой попытки: {m['first_pass_yield']:.0%}",
         f"- шотов не удалось: {len(m['failed_shots'])} {m['failed_shots'] or ''}",
         f"- правил применено: {m['rules_applied']}, выучено новых: {m['rules_learned']}",
+        f"- судья: {m.get('judge')}" + (f", верный вердикт {m['judge_verdict_accuracy']:.0%}, атрибуты точно {m['judge_attrs_exact']:.0%}"
+                                        if m.get('judge_verdict_accuracy') is not None else ''),
         f"- карточек: {m['cards']}, видео: {m['videos']}, монтаж: {m['montage'] or 'нет'}",
         f"- стоимость: ${m['cost_usd']:.3f}{sim}",
         f"- время: {m['wall_sec']} с; по агентам: {m['agent_sec']}",

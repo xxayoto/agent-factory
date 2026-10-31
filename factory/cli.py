@@ -4,6 +4,8 @@
   factory plan BRIEF                   граф задач и вилка стоимости, без вызовов API
   factory run BRIEF [--mode mock]      прогон; live только с --allow-spend USD
   factory bench BRIEF --seeds N        mock: серия прогонов без памяти vs с памятью
+  factory eval-judge BRIEF --judge claude   точность судьи на кадрах с известной истиной
+  factory dashboard                    HTML-дашборд runs/dashboard.html
   factory stats                        сводка по всем прогонам (runs/index.jsonl)
   factory memory [list|reset]          выученные правила
 """
@@ -41,6 +43,7 @@ def cmd_bench(brief, seeds, out_root, defect_rate):
     """Симуляция эффекта памяти: одинаковые сиды, холодная память на каждом прогоне vs накапливаемая."""
     import tempfile
     brief.outputs = {'cards': False, 'videos': False, 'montage': False}
+    brief.limits['workers'] = 1  # шоты по очереди: правило, выученное внутри прогона, попадает в соседний шот детерминированно
     root = tempfile.mkdtemp(prefix='bench-', dir=out_root) if out_root else tempfile.mkdtemp(prefix='factory-bench-')
     res = {}
     for label in ('без памяти', 'с памятью'):
@@ -79,11 +82,22 @@ def main(argv=None):
     r.add_argument('--memory', default=DEFAULT_PATH, help='файл правил памяти')
     r.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
     r.add_argument('--defect-rate', type=float, default=0.3, help='mock: вероятность дрейфа атрибута')
+    r.add_argument('--judge', choices=['mock', 'claude', 'manual'], help='кто судит кадры (по умолчанию mock / из config)')
     bn = sub.add_parser('bench')
     bn.add_argument('brief')
     bn.add_argument('--seeds', type=int, default=10)
     bn.add_argument('--out', help='куда писать журналы бенча (по умолчанию временная папка)')
     bn.add_argument('--defect-rate', type=float, default=0.3)
+    ev = sub.add_parser('eval-judge')
+    ev.add_argument('brief')
+    ev.add_argument('--judge', choices=['mock', 'claude', 'manual'], default='mock')
+    ev.add_argument('--model', default='sonnet', help='модель для --judge claude')
+    ev.add_argument('--n', type=int, default=12)
+    ev.add_argument('--seed', type=int, default=0)
+    ev.add_argument('--workers', type=int, default=3)
+    ev.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
+    db = sub.add_parser('dashboard')
+    db.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
     s = sub.add_parser('stats')
     s.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
     s.add_argument('--json', action='store_true')
@@ -92,7 +106,7 @@ def main(argv=None):
     m.add_argument('--memory', default=DEFAULT_PATH)
     a = ap.parse_args(argv)
 
-    if a.cmd in ('validate', 'plan', 'run', 'bench'):
+    if a.cmd in ('validate', 'plan', 'run', 'bench', 'eval-judge'):
         try:
             brief = spec.load(a.brief)
         except spec.SpecError as e:
@@ -105,12 +119,25 @@ def main(argv=None):
             print(f'  {t[0]:<12} {t[1]}')
         print(f"стоимость mock (симуляция): ${est['mock'][0]}–{est['mock'][1]}; live (оценка по config/prices.yaml): ${est['live'][0]}–{est['live'][1]}")
     elif a.cmd == 'run':
-        o = Orchestrator(brief, a.mode, a.seed, a.memory, a.runs, a.allow_spend, a.defect_rate)
+        o = Orchestrator(brief, a.mode, a.seed, a.memory, a.runs, a.allow_spend, a.defect_rate, a.judge)
         res = o.run()
         print(open(os.path.join(o.log.dir, 'report.md')).read())
         print('журнал:', o.log.dir)
     elif a.cmd == 'bench':
         cmd_bench(brief, a.seeds, a.out, a.defect_rate)
+    elif a.cmd == 'eval-judge':
+        from . import evals
+        kw = {'model': a.model} if a.judge == 'claude' else {}
+        m, rows, out = evals.run(brief, a.judge, a.n, a.runs, a.seed, a.workers, **kw)
+        for r in rows:
+            mark = 'ERR' if r['error'] else ('брак' if r['defect'] else 'чист')
+            wrong = {k: f"{v}→{r['got'].get(k)}" for k, v in r['truth'].items() if r['got'].get(k) != v}
+            print(f"  {r['path']:<12} {mark:<5} {'ok' if not wrong and not r['error'] else wrong or r['error']}")
+        print(json.dumps(m, ensure_ascii=False, indent=2))
+        print('файлы:', out)
+    elif a.cmd == 'dashboard':
+        from .dashboard import render
+        print(render(a.runs))
     elif a.cmd == 'stats':
         cmd_stats(a.runs, a.json)
     elif a.cmd == 'memory':

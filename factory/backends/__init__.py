@@ -19,7 +19,10 @@ def frame_backend(name, **kw):
     raise ValueError(f'неизвестный бэкенд кадров: {name}')
 
 
-def judge_inspector(name):
+def judge_inspector(name, **kw):
+    if name == 'claude':
+        from .claude_judge import ClaudeInspector
+        return ClaudeInspector(**kw)
     if name == 'mock':
         from .mock import MockInspector
         return MockInspector()

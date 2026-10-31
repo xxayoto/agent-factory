@@ -3,35 +3,19 @@
 python3 examples/make_assets.py
 """
 import os
+import sys
 
 from PIL import Image, ImageDraw, ImageFilter
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from factory.backends.render import earrings  # noqa: E402
 
 D = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'assets')
 os.makedirs(D, exist_ok=True)
 
 
-def product(name, draw):
-    im = Image.new('RGBA', (400, 300), (0, 0, 0, 0))
-    draw(ImageDraw.Draw(im))
-    im.save(os.path.join(D, name))
-
-
-def stud_pearl(d):
-    for cx in (130, 270):
-        d.ellipse((cx - 42, 108, cx + 42, 192), fill=(205, 165, 70))
-        d.ellipse((cx - 34, 116, cx + 34, 184), fill=(240, 236, 228))
-        d.ellipse((cx - 18, 126, cx - 4, 140), fill=(255, 255, 255))
-
-
-def hoop_silver(d):
-    for cx in (130, 270):
-        d.ellipse((cx - 55, 90, cx + 55, 210), outline=(190, 195, 205), width=12)
-
-
-def stud_crystal(d):
-    for cx in (130, 270):
-        d.ellipse((cx - 38, 112, cx + 38, 188), fill=(205, 165, 70))
-        d.regular_polygon((cx, 150, 30), 8, fill=(200, 225, 245), outline=(255, 255, 255))
+def product(name, attrs):
+    earrings(attrs).save(os.path.join(D, name))
 
 
 def ref(name, top, bottom):
@@ -48,9 +32,9 @@ def ref(name, top, bottom):
     im.filter(ImageFilter.GaussianBlur(30)).save(os.path.join(D, name))
 
 
-product('stud_pearl.png', stud_pearl)
-product('hoop_silver.png', hoop_silver)
-product('stud_crystal.png', stud_crystal)
+product('stud_pearl.png', {'earring_type': 'stud', 'metal': 'gold', 'stone': 'pearl'})
+product('hoop_silver.png', {'earring_type': 'hoop', 'metal': 'silver'})
+product('stud_crystal.png', {'earring_type': 'stud', 'metal': 'gold', 'stone': 'crystal'})
 ref('ref_studio_warm.jpg', (214, 190, 170), (120, 95, 80))
 ref('ref_studio_cool.jpg', (180, 195, 210), (60, 70, 90))
 print('assets ->', D)

@@ -55,10 +55,10 @@ def plan(brief):
 
 
 class Orchestrator:
-    def __init__(self, brief, mode='mock', seed=0, memory_path=None, runs_dir=None, allow_spend=None, defect_rate=0.3):
+    def __init__(self, brief, mode='mock', seed=0, memory_path=None, runs_dir=None, allow_spend=None, defect_rate=0.3, judge=None):
         self.brief, self.mode = brief, mode
         self.memory = Memory(memory_path) if memory_path else Memory()
-        self.runs_dir = runs_dir or os.path.join(ROOT, 'runs')
+        self.runs_dir = os.path.abspath(runs_dir or os.path.join(ROOT, 'runs'))
         limit = float(brief.limits['budget_usd'])
         if mode == 'live':
             if allow_spend is None:
@@ -66,11 +66,11 @@ class Orchestrator:
             limit = min(limit, float(allow_spend))
             cfg = live_config()
             frame_be = backends.frame_backend(cfg['live']['frame'], model=cfg.get('wavespeed', {}).get('frame_model'))
-            inspector = backends.judge_inspector(cfg['live']['judge'])
+            inspector = backends.judge_inspector(judge or cfg['live']['judge'])
             self.video_be, self.video_price = backends.video_backend('local_kenburns'), 'local_kenburns'
         else:
             frame_be = backends.frame_backend('mock', seed=seed, defect_rate=defect_rate)
-            inspector = backends.judge_inspector('mock')
+            inspector = backends.judge_inspector(judge or 'mock')
             self.video_be, self.video_price = backends.video_backend('mock'), 'mock'
         self.budget = Budget(limit)
         run_id = f"{dt.datetime.now():%Y%m%d-%H%M%S}-{brief.project}-{uuid.uuid4().hex[:4]}"
@@ -82,7 +82,8 @@ class Orchestrator:
         self.card = CardAgent(self.log, brief)
         self.video = VideoAgent(self.log, self.video_be, self.budget, brief)
         self.montage = MontageAgent(self.log, brief)
-        self.stats = {'generated': 0, 'rejected': 0, 'first_pass': 0, 'learned': 0, 'rules_used': set()}
+        self.stats = {'generated': 0, 'rejected': 0, 'first_pass': 0, 'learned': 0, 'rules_used': set(),
+                      'judged': 0, 'judge_verdict_ok': 0, 'judge_attrs_exact': 0, 'judge_list_usd': 0.0}
         self.stopped_by_budget = False
 
     def shot_loop(self, shot):
@@ -99,7 +100,12 @@ class Orchestrator:
                 self.log.event('orchestrator', shot.id, 'budget_stop', reason=str(e))
                 return None
             self.stats['generated'] += 1
-            ok, tech, mism = self.judge.review(shot, product, path, info.get('raw_size'), rules, attempt)
+            ok, tech, mism, extra = self.judge.review(shot, product, path, info.get('raw_size'), rules, attempt)
+            if 'truth_verdict_ok' in extra:
+                self.stats['judged'] += 1
+                self.stats['judge_verdict_ok'] += extra['truth_verdict_ok']
+                self.stats['judge_attrs_exact'] += extra['truth_attrs_exact']
+            self.stats['judge_list_usd'] += extra.get('list_usd') or 0.0
             if ok:
                 if attempt == 1:
                     self.stats['first_pass'] += 1
@@ -135,7 +141,10 @@ class Orchestrator:
         montage = None
         if b.outputs.get('montage') and approved and have_ffmpeg():
             items = [(s, videos.get(s.id) or cards.get(s.id) or frames[s.id]) for s in approved]
-            montage = self.montage.run(items, self.out)
+            try:
+                montage = self.montage.run(items, self.out)
+            except Exception as e:  # монтаж — последний шаг; его сбой не должен стирать метрики прогона
+                self.log.event('montage', 'montage', 'failed', error=str(e)[:300])
 
         g, r = self.stats['generated'], self.stats['rejected']
         return self.log.finish({
@@ -147,6 +156,10 @@ class Orchestrator:
             'rules_applied': len(self.stats['rules_used']), 'rules_learned': self.stats['learned'],
             'cards': len(cards), 'videos': len(videos), 'montage': montage and os.path.relpath(montage, self.log.dir),
             'stopped_by_budget': self.stopped_by_budget, 'budget_usd': self.budget.limit,
+            'judge': self.judge.inspector.name,
+            'judge_verdict_accuracy': round(self.stats['judge_verdict_ok'] / self.stats['judged'], 3) if self.stats['judged'] else None,
+            'judge_attrs_exact': round(self.stats['judge_attrs_exact'] / self.stats['judged'], 3) if self.stats['judged'] else None,
+            'judge_list_usd': round(self.stats['judge_list_usd'], 4),
         })
 
     def _video(self, shot, frame):
