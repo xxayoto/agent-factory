@@ -139,6 +139,16 @@ class TestPipeline(Base):
         judged = [e for e in ev if e['event'] in ('approved', 'rejected')]
         self.assertEqual(len(judged), m['frames_generated'])  # кадры ролика не попали в статистику кадров
 
+    @unittest.skipUnless(have_ffmpeg(), 'нужен ффmpeg'.replace('фф', 'ff'))
+    def test_montage_uses_clean_frames_not_cards(self):
+        import json
+        o, m = self.run_mock(brief=self.brief(cards=True, videos=False, montage=True))
+        with open(os.path.join(o.log.dir, 'events.jsonl')) as f:
+            mont = [json.loads(l) for l in f if '"montage"' in l and '"done"' in l][0]
+        parts = os.listdir(os.path.join(o.log.dir, 'out', 'montage_parts'))
+        self.assertTrue(mont['shots'])
+        self.assertFalse(any('_card' in p for p in parts))
+
     def test_rejects_go_back_with_feedback(self):
         import json
         for seed in range(10):

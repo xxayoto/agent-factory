@@ -114,6 +114,9 @@ class Orchestrator:
                 self.stats['generated'] += 1
                 self.log.add_cost(e.get('cost_usd') or 0.0)
                 self.budget.spent += e.get('cost_usd') or 0.0
+            elif ev == 'done' and e.get('agent') == 'video':  # оплаченный ролик тоже в стоимости прогона
+                self.log.add_cost(e.get('cost_usd') or 0.0)
+                self.budget.spent += e.get('cost_usd') or 0.0
             elif ev == 'approved':
                 self.done[e['task']] = e['path']
                 self.stats['first_pass'] += e['attempt'] == 1
@@ -197,7 +200,9 @@ class Orchestrator:
 
         montage = None
         if b.outputs.get('montage') and approved and have_ffmpeg():
-            items = [(s, videos.get(s.id) or cards.get(s.id) or frames[s.id]) for s in approved]
+            # в монтаж — ролик или чистый кадр, не карточка: плашка карточки и субтитры дали бы два слоя текста
+            # (найдено на live #1: «В ПОДАРОК» под субтитром «ПОДАРОК БЕЗ ПОВОДА»)
+            items = [(s, videos.get(s.id) or frames[s.id]) for s in approved]
             try:
                 montage = self.montage.run(items, self.out)
             except Exception as e:  # монтаж — последний шаг; его сбой не должен стирать метрики прогона
