@@ -1,6 +1,7 @@
 """Приёмка M1 (specs/m1-mock-pipeline.md). Запуск: python3 -m unittest -v"""
 import os
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -267,6 +268,67 @@ class TestColor(Base):
         o.judge.review = scene_fail
         o.run()
         self.assertFalse(any(r['attribute'] == 'scene' for r in o.memory.rules))
+
+
+class TestVoice(unittest.TestCase):
+    def test_align_fixes_mishearing(self):
+        from factory.voice import align
+        heard = [{'w': 'сияние,', 's': 0.0, 'e': 0.52}, {'w': 'которые', 's': 0.64, 'e': 0.9},
+                 {'w': 'замечают', 's': 0.9, 'e': 1.7}]
+        words, mis = align('Сияние, которое замечают', heard)
+        self.assertEqual([w['t'] for w in words], ['Сияние,', 'которое', 'замечают'])
+        self.assertEqual(words[1]['s'], 0.64)
+        self.assertEqual(mis, [{'script': 'которое', 'heard': 'которые'}])
+        # слово не распознано вовсе — время между соседями
+        words, mis = align('Сияние, которое замечают', [heard[0], heard[2]])
+        self.assertTrue(0.52 <= words[1]['s'] < words[1]['e'] <= 0.9)
+
+    def test_phrases(self):
+        from factory.voice import FUNC, norm, phrases
+        ws = [{'t': t, 's': i * 0.3, 'e': i * 0.3 + 0.25} for i, t in
+              enumerate('Серебряные кольца для смелого образа и для каждого дня'.split())]
+        ph = phrases(ws)
+        self.assertTrue(all(len(p['words']) <= 4 for p in ph))
+        self.assertTrue(all(norm(p['words'][-1]['t']) not in FUNC for p in ph))
+        self.assertEqual(sum(len(p['words']) for p in ph), len(ws))
+
+
+@unittest.skipUnless(have_ffmpeg(), 'нужен ffmpeg')
+class TestQC(Base):
+    def lavfi(self, name, src, sec):
+        p = os.path.join(self.tmp, name)
+        subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'lavfi', '-i', f"{src}{':' if '=' in src else '='}d={sec}:s=320x240:r=25", '-pix_fmt', 'yuv420p', p], check=True)
+        return p
+
+    def test_black_detected(self):
+        from factory.agents.qc import black_segments
+        self.assertTrue(black_segments(self.lavfi('black.mp4', 'color=c=black', 1)))
+        self.assertFalse(black_segments(self.lavfi('noise.mp4', 'testsrc2', 1)))
+
+    def test_freeze_detected(self):
+        from factory.agents.qc import freeze_segments
+        self.assertTrue(freeze_segments(self.lavfi('still.mp4', 'color=c=gray', 2)))
+        self.assertFalse(freeze_segments(self.lavfi('moving.mp4', 'testsrc2', 2)))
+
+    def test_wer(self):
+        from factory.agents.qc import wer
+        self.assertEqual(wer('Сияние, которое замечают'.split(), ['сияние', 'которое', 'замечают']), 0)
+        self.assertAlmostEqual(wer('Сияние, которое замечают'.split(), ['сияние', 'которые', 'замечают']), 1 / 3)
+
+    def test_phrase_across_cut_fails(self):
+        from factory.agents.qc import QCAgent
+        from factory.runlog import RunLog
+        v = self.lavfi('m.mp4', 'testsrc', 4)
+        w = lambda t, s: {'t': t, 's': s, 'e': s + 0.3}
+        tl = {'duration': 4.0, 'words': [], 'sources': ['a.mp4', 'b.png'], 'segments': [[0, 2.0], [2.0, 2.0]],
+              'phrases': [{'words': [w('которое', 1.5), w('замечают', 1.8), w('подарок', 2.1)], 's': 1.5, 'e': 2.4}]}
+        ok, checks = QCAgent(RunLog(self.tmp, 'qc', 'mock')).run(v, tl)
+        self.assertFalse(next(c for c in checks if c['name'] == 'фраза не переходит через склейку')['ok'])
+
+    def test_mock_run_has_qc(self):
+        o, m = self.run_mock(brief=self.brief(cards=False, videos=True, montage=True))
+        self.assertIsNotNone(m['qc_ok'])
+        self.assertTrue(os.path.exists(os.path.join(o.log.dir, 'out', 'montage.qc.json')))
 
 
 class TestCard(unittest.TestCase):

@@ -68,6 +68,7 @@ def render_report(m):
         f"- судья: {m.get('judge')}" + (f", верный вердикт {m['judge_verdict_accuracy']:.0%}, атрибуты точно {m['judge_attrs_exact']:.0%}"
                                         if m.get('judge_verdict_accuracy') is not None else ''),
         f"- карточек: {m['cards']}, видео: {m['videos']} (принято судьёй {m.get('videos_approved', 0)}), монтаж: {m['montage'] or 'нет'}",
+        f"- QC монтажа: " + ('—' if m.get('qc_ok') is None else ('пройден' if m['qc_ok'] else f"не пройден: {', '.join(m.get('qc_failed') or [])}")),
         f"- стоимость: ${m['cost_usd']:.3f}{sim}" + (f"; по балансу провайдера: ${m['real_spend_usd']:.3f}" if m.get('real_spend_usd') is not None else ''),
         f"- время: {m['wall_sec']} с; по агентам: {m['agent_sec']}",
         '',

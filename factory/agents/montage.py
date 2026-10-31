@@ -1,7 +1,13 @@
-"""Агент монтажа: ролики/карточки шотов → один ролик с субтитрами кусками по 2–4 слова
-(логика разбивки из test_bs_media/work/edit.py; пословная подсветка через Remotion — M3)."""
+"""Агент монтажа: ролики/кадры шотов → один ролик с субтитрами.
+
+engine=ffmpeg — субтитры кусками по 2–4 слова без звука (логика test_bs_media/work/edit.py);
+engine=remotion — озвучка подписей (Piper), тайминг слов (faster-whisper, текст из сценария),
+пословная подсветка и наезд камеры на кадрах в Remotion (remotion/, по образцу remotion_bs).
+"""
+import json
 import os
 import subprocess
+import wave
 
 from PIL import Image, ImageDraw
 
@@ -53,12 +59,118 @@ def caption_png(text, path, width):
     img.save(path)
 
 
+REMOTION = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'remotion')
+
+
+def _video_len(path):
+    out = subprocess.run(['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', path],
+                         capture_output=True, text=True).stdout.strip()
+    return float(out or 0)
+
+
 class MontageAgent(Agent):
     name = 'montage'
 
-    def __init__(self, log, brief):
+    def __init__(self, log, brief, voice_cfg=None):
         super().__init__(log)
-        self.brief = brief
+        self.brief, self.voice_cfg = brief, voice_cfg or {}
+        self.timeline = None
+
+    def say(self, text):
+        """Текст для синтеза: латиница брендов → как произносить (Piper читает «AURA» как «о-о-о», найдено QC 01.11).
+        Субтитры остаются как в сценарии."""
+        rep = dict(self.voice_cfg.get('say') or {})
+        b = self.brief.brand
+        if b.get('name') and b.get('say'):
+            rep.setdefault(b['name'], b['say'])
+        for k, v in rep.items():
+            text = text.replace(k, v)
+        return text.replace(' — ', ', ')
+
+    def voice_take(self, text, wav, tries=4):
+        """Озвучка с проверкой: Piper звучит каждый раз немного иначе, дубль со смазанными словами пересинтезируется
+        (замер 01.11: тот же текст давал WER 0 % и 20 % в разных дублях). Берётся первый чистый или лучший дубль."""
+        from ..voice import transcribe, tts, wav_duration
+        from .qc import wer
+        spoken = self.say(text).split()
+        best, takes = None, []
+        for i in range(tries):
+            p = wav if i == 0 else f'{wav[:-4]}_take{i}.wav'
+            tts(self.say(text), p, self.voice_cfg['bin'], self.voice_cfg['voice'], self.voice_cfg.get('length_scale', 1.0))
+            heard = transcribe(p, self.voice_cfg.get('whisper', 'medium'))
+            e = wer(spoken, [h['w'] for h in heard])
+            takes.append(round(e, 3))
+            if best is None or e < best[0]:
+                best = (e, p, heard)
+            if e == 0:
+                break
+        if best[1] != wav:
+            os.replace(best[1], wav)
+        return wav_duration(wav), best[2], takes
+
+    def run_remotion(self, items, out_dir, min_still=2.2, pad=0.35):
+        """Озвучка → тайминг слов → props.json → remotion render. Возвращает путь; таймлайн — в self.timeline (для QC)."""
+        from ..voice import align, phrases
+        def _run():
+            work = os.path.join(out_dir, 'montage_voice')
+            os.makedirs(work, exist_ok=True)
+            segs, words, ph, mishear, pcm, rate, t = [], [], [], [], b'', None, 0.0
+            for shot, src in items:
+                text = (shot.caption or '').strip()
+                vdur, wav = 0.0, None
+                heard = None
+                if text:
+                    wav = os.path.join(work, f'{shot.id}.wav')
+                    vdur, heard, takes = self.voice_take(text, wav)
+                    self.log.event(self.name, shot.id, 'voice', takes=takes)
+                is_video = src.endswith('.mp4')
+                dur = max(vdur + pad, min_still)
+                if is_video:
+                    dur = min(_video_len(src), max(dur, min_still))
+                dur = round(dur * 25) / 25
+                if wav:
+                    ws, mis = align(text, heard)
+                    shot_words = [{'t': w['t'], 's': round(w['s'] + t, 3), 'e': round(min(w['e'], dur) + t, 3)} for w in ws]
+                    words += shot_words
+                    ph += phrases(shot_words)  # фраза не переходит через склейку (найдено глазами на live #1)
+                    mishear += [{**m, 'shot': shot.id} for m in mis]
+                    with wave.open(wav) as w:
+                        rate, frames = w.getframerate(), w.readframes(w.getnframes())
+                        width = w.getsampwidth()
+                else:
+                    frames, width = b'', 2
+                rate = rate or 22050
+                need = int(round(dur * rate)) * width
+                pcm += frames[:need] + b'\x00' * max(0, need - len(frames))
+                name = os.path.basename(src)
+                segs.append({'src': name, 'kind': 'video' if is_video else 'image', 'dur': dur})
+                t += dur
+            voice = os.path.join(out_dir, 'voice.wav')
+            with wave.open(voice, 'wb') as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(rate or 22050)
+                w.writeframes(pcm)
+            props = {'fps': 25, 'width': self.brief.width, 'height': self.brief.height, 'segments': segs,
+                     'phrases': ph, 'audio': 'voice.wav', 'accent': self.voice_cfg.get('accent', '#FFD54A')}
+            pp = os.path.join(out_dir, 'montage_props.json')
+            with open(pp, 'w') as f:
+                json.dump(props, f, ensure_ascii=False)
+            out = os.path.join(out_dir, 'montage.mp4')
+            r = subprocess.run(['npx', 'remotion', 'render', 'src/index.ts', 'Montage', out, f'--props={pp}',
+                                f'--public-dir={out_dir}', '--log=error'], cwd=REMOTION, capture_output=True, text=True)
+            if r.returncode != 0:
+                raise RuntimeError(f'remotion render: {(r.stderr or r.stdout)[-500:]}')
+            spoken = ' '.join(self.say((sh.caption or '').strip()) for sh, _ in items).split()
+            starts = [sum(x['dur'] for x in segs[:i]) for i in range(len(segs))]
+            self.timeline = {'duration': round(t, 3), 'words': words, 'phrases': ph, 'spoken': spoken,
+                             'segments': [[round(a, 3), x['dur']] for a, x in zip(starts, segs)],
+                             'sources': [s for _, s in items], 'mishear': mishear}
+            return out
+        out = self.timed('montage', _run)
+        self.log.event(self.name, 'montage', 'done', path=out, engine='remotion', shots=[s.id for s, _ in items],
+                       duration=self.timeline['duration'], mishear=self.timeline['mishear'])
+        return out
 
     def segment(self, src, caption, dur, out, tmp):
         W, H = self.brief.width, self.brief.height
@@ -91,6 +203,8 @@ class MontageAgent(Agent):
             with open(lst, 'w') as f:
                 f.write('\n'.join(f"file '{s}'" for s in segs))
             out = os.path.join(out_dir, 'montage.mp4')
+            self.timeline = {'duration': sum(float((s.video or {}).get('seconds', 3)) if p.endswith('.mp4') else seconds_per_still
+                                             for s, p in items), 'words': [], 'phrases': [], 'sources': [p for _, p in items]}
             subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'concat', '-safe', '0', '-i', lst, '-c', 'copy',
                             '-movflags', '+faststart', out], check=True)
             return out

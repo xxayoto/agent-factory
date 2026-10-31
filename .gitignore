@@ -25,3 +25,7 @@ __pycache__/
 
 # брифы с материалами клиентов — только локально
 briefs/local/
+
+# remotion
+node_modules/
+remotion/out/

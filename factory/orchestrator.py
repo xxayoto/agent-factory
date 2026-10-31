@@ -18,6 +18,7 @@ from .agents.card import CardAgent
 from .agents.frame import FrameAgent
 from .agents.judge import JudgeAgent
 from .agents.montage import MontageAgent
+from .agents.qc import QCAgent
 from .agents.video import VideoAgent
 from .backends.local import have_ffmpeg
 from .budget import Budget, BudgetExceeded
@@ -99,7 +100,10 @@ class Orchestrator:
         self.judge = JudgeAgent(self.log, inspector, brief)
         self.card = CardAgent(self.log, brief)
         self.video = VideoAgent(self.log, self.video_be, self.budget, brief, self.judge)
-        self.montage = MontageAgent(self.log, brief)
+        mcfg = brief.outputs.get('montage')
+        self.montage_engine = mcfg.get('engine', 'ffmpeg') if isinstance(mcfg, dict) else 'ffmpeg'
+        self.montage = MontageAgent(self.log, brief, {**live_config().get('piper', {}), **(mcfg if isinstance(mcfg, dict) else {})})
+        self.qc = QCAgent(self.log)
         self.stats = {'generated': 0, 'rejected': 0, 'first_pass': 0, 'learned': 0, 'rules_used': set(),
                       'judged': 0, 'judge_verdict_ok': 0, 'judge_attrs_exact': 0, 'judge_list_usd': 0.0}
         self.stopped_by_budget = False
@@ -198,15 +202,23 @@ class Orchestrator:
             cards = {k: f.result() for k, f in fc.items()}
             videos = {k: v for k, v in ((k, f.result()) for k, f in fv.items()) if v}
 
-        montage = None
+        montage, qc_ok = None, None
         if b.outputs.get('montage') and approved and have_ffmpeg():
             # в монтаж — ролик или чистый кадр, не карточка: плашка карточки и субтитры дали бы два слоя текста
             # (найдено на live #1: «В ПОДАРОК» под субтитром «ПОДАРОК БЕЗ ПОВОДА»)
             items = [(s, videos.get(s.id) or frames[s.id]) for s in approved]
             try:
-                montage = self.montage.run(items, self.out)
+                if self.montage_engine == 'remotion':
+                    montage = self.montage.run_remotion(items, self.out)
+                else:
+                    montage = self.montage.run(items, self.out)
             except Exception as e:  # монтаж — последний шаг; его сбой не должен стирать метрики прогона
                 self.log.event('montage', 'montage', 'failed', error=str(e)[:300])
+            if montage and b.outputs.get('qc', True):
+                try:
+                    qc_ok, _ = self.qc.run(montage, self.montage.timeline)
+                except Exception as e:
+                    self.log.event('qc', 'montage', 'qc_error', error=str(e)[:300])
 
         g, r = self.stats['generated'], self.stats['rejected']
         after = self._balance()
@@ -226,7 +238,9 @@ class Orchestrator:
             'resumed': bool(self.log.previous),
             'rules_applied': len(self.stats['rules_used']), 'rules_learned': self.stats['learned'],
             'cards': len(cards), 'videos': len(videos),
-            'videos_approved': sum(e['event'] == 'video_approved' for e in self.log.read()), 'montage': montage and os.path.relpath(montage, self.log.dir),
+            'videos_approved': sum(e['event'] == 'video_approved' for e in self.log.read()),
+            'montage_engine': self.montage_engine if montage else None, 'qc_ok': qc_ok,
+            'qc_failed': next((e['failed'] for e in reversed(self.log.read()) if e['event'] in ('qc_passed', 'qc_failed')), None), 'montage': montage and os.path.relpath(montage, self.log.dir),
             'stopped_by_budget': self.stopped_by_budget, 'budget_usd': self.budget.limit,
             'judge': self.judge.inspector.name,
             'judge_verdict_accuracy': round(self.stats['judge_verdict_ok'] / self.stats['judged'], 3) if self.stats['judged'] else None,

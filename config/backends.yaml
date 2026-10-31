@@ -10,3 +10,6 @@ wavespeed:
   video_durations: [6, 10]
 runninghub:
   h3_api_json: null               # локальный путь к API-JSON воркфлоу — в config/local.yaml (в .gitignore)
+piper:                            # озвучка монтажа (engine: remotion); пути — в config/local.yaml
+  bin: null
+  voice: null
