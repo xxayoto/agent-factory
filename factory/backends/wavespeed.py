@@ -84,3 +84,41 @@ class WaveSpeedFrames:
                     raise
                 time.sleep(5)
         return {'raw_size': list(Image.open(out_path).size), 'task_id': task_id, 'model': self.model, 'reused_task': reused}
+
+
+class WaveSpeedVideo(WaveSpeedFrames):
+    """Кадр → ролик (i2v), та же защита от двойной оплаты: id задачи в <out>.task до первого опроса."""
+    name = 'wavespeed'
+
+    def __init__(self, model, durations=(6, 10), resolution=None):
+        super().__init__(model)
+        self.durations, self.video_resolution = list(durations), resolution
+
+    def animate(self, frame_path, out_path, motion, seconds, width, height):
+        task_file = out_path + '.task'
+        if os.path.exists(task_file):
+            task_id = open(task_file).read().strip()
+        else:
+            dur = min(self.durations, key=lambda d: abs(d - seconds))
+            body = {'image': self._upload(frame_path), 'prompt': motion, 'duration': dur}
+            if self.video_resolution:
+                body['resolution'] = self.video_resolution
+            task_id = self._req('POST', f'/{self.model}', body)['data']['id']
+            with open(task_file, 'w') as f:
+                f.write(task_id)
+        while True:
+            res = self._req('GET', f'/predictions/{task_id}/result', tries=5)['data']
+            if res['status'] in ('completed', 'failed'):
+                break
+            time.sleep(5)
+        if res['status'] != 'completed':
+            raise RuntimeError(f"failed: {res.get('error')}")
+        for i in range(4):
+            try:
+                urllib.request.urlretrieve(res['outputs'][0], out_path)
+                break
+            except (OSError, TimeoutError):
+                if i == 3:
+                    raise
+                time.sleep(5)
+        return {'task_id': task_id, 'model': self.model}

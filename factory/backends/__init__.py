@@ -33,8 +33,14 @@ def judge_inspector(name, **kw):
     raise ValueError(f'неизвестный инспектор судьи: {name}')
 
 
-def video_backend(name):
+def video_backend(name, **kw):
     if name in ('mock', 'local_kenburns'):
         from .local import KenBurns
         return KenBurns()
-    raise ValueError(f'видеобэкенд {name} появится в M2 (перенос rh_h3.py)')
+    if name == 'wavespeed':
+        from .wavespeed import WaveSpeedVideo
+        return WaveSpeedVideo(kw['model'], kw.get('durations') or (6, 10), kw.get('resolution'))
+    if name == 'runninghub_h3':
+        from .runninghub_h3 import H3Video
+        return H3Video(kw.get('api_json'))
+    raise ValueError(f'неизвестный видеобэкенд: {name}')

@@ -7,7 +7,9 @@ frame:
   wavespeed: 0.048       # seedream-v5.0-pro/edit 1k, get_price 31.10.2026
 video:
   mock: 0.30            # ориентир: i2v 5 с, 720p
-  runninghub_h3: 0.30
+  runninghub_h3: 0.055   # кошелёк RH, 5 с (тестовое Самойлова, 31.10)
+  wavespeed: 0.28        # minimax/hailuo-2.3/i2v-standard, 6 с
+  local_kenburns: 0.0
 judge:
   mock: 0.0
   manual: 0.0

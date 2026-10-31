@@ -29,7 +29,13 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 def live_config():
     with open(os.path.join(ROOT, 'config', 'backends.yaml')) as f:
-        return yaml.safe_load(f)
+        cfg = yaml.safe_load(f)
+    local = os.path.join(ROOT, 'config', 'local.yaml')  # локальные пути, в .gitignore
+    if os.path.exists(local):
+        with open(local) as f:
+            for k, v in (yaml.safe_load(f) or {}).items():
+                cfg[k] = {**cfg.get(k, {}), **v} if isinstance(v, dict) else v
+    return cfg
 
 
 def plan(brief):
@@ -47,7 +53,7 @@ def plan(brief):
     n_frames, n_vid = len(brief.shots), sum(1 for t in tasks if t[0] == 'video')
     retries = brief.limits['max_retries']
     est = {}
-    for mode, fb, vb in (('mock', 'mock', 'mock'), ('live', live_config()['live']['frame'], 'local_kenburns')):
+    for mode, fb, vb in (('mock', 'mock', 'mock'), ('live', live_config()['live']['frame'], live_config()['live'].get('video', 'local_kenburns'))):
         lo = n_frames * b.price('frame', fb) + n_vid * b.price('video', vb)
         hi = n_frames * (1 + retries) * b.price('frame', fb) + n_vid * b.price('video', vb)
         est[mode] = (round(lo, 3), round(hi, 3))
@@ -68,7 +74,10 @@ class Orchestrator:
             ws = cfg.get('wavespeed', {})
             frame_be = backends.frame_backend(cfg['live']['frame'], model=ws.get('frame_model'), resolution=ws.get('resolution', '1k'))
             inspector = self._inspector(judge or cfg['live']['judge'])
-            self.video_be, self.video_price = backends.video_backend('local_kenburns'), 'local_kenburns'
+            vname = cfg['live'].get('video', 'local_kenburns')
+            self.video_be = backends.video_backend(vname, model=ws.get('video_model'), durations=ws.get('video_durations'),
+                                                   api_json=cfg.get('runninghub', {}).get('h3_api_json'))
+            self.video_price = vname
         else:
             frame_be = backends.frame_backend('mock', seed=seed, defect_rate=defect_rate)
             inspector = self._inspector(judge or 'mock')
@@ -89,7 +98,7 @@ class Orchestrator:
             self.log.event('orchestrator', '*', 'balance', usd=self.balance_before)
         self.judge = JudgeAgent(self.log, inspector, brief)
         self.card = CardAgent(self.log, brief)
-        self.video = VideoAgent(self.log, self.video_be, self.budget, brief)
+        self.video = VideoAgent(self.log, self.video_be, self.budget, brief, self.judge)
         self.montage = MontageAgent(self.log, brief)
         self.stats = {'generated': 0, 'rejected': 0, 'first_pass': 0, 'learned': 0, 'rules_used': set(),
                       'judged': 0, 'judge_verdict_ok': 0, 'judge_attrs_exact': 0, 'judge_list_usd': 0.0}
@@ -211,7 +220,8 @@ class Orchestrator:
             'failed_shots': [s.id for s in b.shots if not frames[s.id]],
             'resumed': bool(self.log.previous),
             'rules_applied': len(self.stats['rules_used']), 'rules_learned': self.stats['learned'],
-            'cards': len(cards), 'videos': len(videos), 'montage': montage and os.path.relpath(montage, self.log.dir),
+            'cards': len(cards), 'videos': len(videos),
+            'videos_approved': sum(e['event'] == 'video_approved' for e in self.log.read()), 'montage': montage and os.path.relpath(montage, self.log.dir),
             'stopped_by_budget': self.stopped_by_budget, 'budget_usd': self.budget.limit,
             'judge': self.judge.inspector.name,
             'judge_verdict_accuracy': round(self.stats['judge_verdict_ok'] / self.stats['judged'], 3) if self.stats['judged'] else None,

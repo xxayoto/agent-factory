@@ -127,6 +127,18 @@ class TestPipeline(Base):
             os.chdir(cwd)
         self.assertTrue(m['montage'])
 
+    @unittest.skipUnless(have_ffmpeg(), 'нужен ffmpeg')
+    def test_video_is_judged_separately(self):
+        import json
+        o, m = self.run_mock(brief=self.brief(cards=False, videos=True, montage=False))
+        with open(os.path.join(o.log.dir, 'events.jsonl')) as f:
+            ev = [json.loads(l) for l in f]
+        vj = [e for e in ev if e['event'] in ('video_frame_approved', 'video_frame_rejected')]
+        self.assertEqual(len(vj), 2 * m['videos'])  # середина и конец каждого ролика
+        self.assertTrue(any(e['event'] in ('video_approved', 'video_rejected') for e in ev))
+        judged = [e for e in ev if e['event'] in ('approved', 'rejected')]
+        self.assertEqual(len(judged), m['frames_generated'])  # кадры ролика не попали в статистику кадров
+
     def test_rejects_go_back_with_feedback(self):
         import json
         for seed in range(10):

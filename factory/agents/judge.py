@@ -46,13 +46,16 @@ class JudgeAgent(Agent):
         box = [bbox[k] for k in ('x0', 'y0', 'x1', 'y1')]
         return round(delta_e(stone_lab(product.photos[0], product.color_box), stone_lab(path, box)), 1)
 
-    def review(self, shot, product, path, raw_size, rules, attempt):
+    def review(self, shot, product, path, raw_size, rules, attempt, kind='frame'):
+        """kind='video_frame' — кадр из ролика: размер другой, сцену фото-промпта не проверяем, события отдельно."""
         extra = {}
         cfg = self.brief.judge
-        scene = shot.prompt if cfg.get('check_scene', True) else None
+        scene = shot.prompt if cfg.get('check_scene', True) and kind == 'frame' else None
 
         def _run():
             tech = self.technical(path, raw_size)
+            if kind != 'frame':
+                tech = [t for t in tech if not t.startswith('размер')]
             mismatches = []
             if not tech:
                 observed = self.inspector.inspect(path, product, scene=scene)
@@ -83,9 +86,10 @@ class JudgeAgent(Agent):
             return tech, mismatches
         tech, mismatches = self.timed(shot.id, _run)
         ok = not tech and not mismatches
+        prefix = '' if kind == 'frame' else f'{kind}_'
         if ok and extra.get('disputed'):
-            self.log.event(self.name, shot.id, 'needs_review', attempt=attempt, path=path, disputed=extra['disputed'])
-        self.log.event(self.name, shot.id, 'approved' if ok else 'rejected', attempt=attempt, path=path,
+            self.log.event(self.name, shot.id, prefix + 'needs_review', attempt=attempt, path=path, disputed=extra['disputed'])
+        self.log.event(self.name, shot.id, prefix + ('approved' if ok else 'rejected'), attempt=attempt, path=path,
                        technical=tech, mismatches=mismatches, checklist=sorted(product.attributes),
                        rules_checked=[r['id'] for r in rules], judge=self.inspector.name, **extra)
         return ok, tech, mismatches, extra
