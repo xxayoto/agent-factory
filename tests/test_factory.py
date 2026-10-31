@@ -207,6 +207,36 @@ class TestJudgeEval(Base):
         self.assertIn('notes', sc['required'])
 
 
+class TestColor(Base):
+    def test_delta_e_separates_stone_colors(self):
+        from factory.color import delta_e, stone_lab
+
+        def img(rgb):
+            p = os.path.join(self.tmp, f'{rgb}.png')
+            im = Image.new('RGB', (200, 200), (250, 250, 248))  # белый фон не должен влиять
+            im.paste(Image.new('RGB', (80, 80), rgb), (60, 60))
+            im.save(p)
+            return p
+        amber, amber2, blue = img((205, 130, 40)), img((200, 128, 45)), img((60, 120, 210))
+        self.assertLess(delta_e(stone_lab(amber), stone_lab(amber2)), 5)
+        self.assertGreater(delta_e(stone_lab(amber), stone_lab(blue)), 25)
+
+    def test_scene_reject_is_not_learned_into_memory(self):
+        o = Orchestrator(self.brief(cards=False, videos=False, montage=False), 'mock', 0,
+                         os.path.join(self.tmp, 'm.yaml'), os.path.join(self.tmp, 'runs'))
+        real = o.judge.review
+
+        def scene_fail(shot, product, path, raw, rules, attempt):
+            ok, tech, mism, extra = real(shot, product, path, raw, rules, attempt)
+            if attempt == 1:
+                mism = mism + [{'attribute': 'scene', 'expected': 'shot brief', 'got': 'worn instead of held', 'hint': 'x'}]
+                ok = False
+            return ok, tech, mism, extra
+        o.judge.review = scene_fail
+        o.run()
+        self.assertFalse(any(r['attribute'] == 'scene' for r in o.memory.rules))
+
+
 class TestCard(unittest.TestCase):
     def test_logo_contrast(self):
         from factory.agents.card import logo_color

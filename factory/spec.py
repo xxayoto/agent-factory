@@ -15,6 +15,7 @@ class Product:
     photos: list
     tags: list
     attributes: dict
+    color_box: list | None = None  # рамка камня на photos[0] (доли) — эталон цвета для замера ΔE
 
 
 @dataclass
@@ -69,7 +70,7 @@ def load(path):
         for ph in photos:
             if not os.path.exists(ph):
                 raise SpecError(f'product {pid}: нет файла {ph}')
-        products[pid] = Product(pid, photos, p.get('tags', []), _req(p, 'attributes', f'product {pid}'))
+        products[pid] = Product(pid, photos, p.get('tags', []), _req(p, 'attributes', f'product {pid}'), p.get('color_box'))
 
     references = {}
     for r in raw.get('references', []) or []:

@@ -5,6 +5,8 @@ import os
 
 from PIL import Image, ImageStat
 
+from ..color import delta_e, stone_lab
+
 from .base import Agent
 
 
@@ -37,15 +39,34 @@ class JudgeAgent(Agent):
             issues.append(f'исходник {raw_size} меньше половины целевого разрешения')
         return issues
 
+    def color(self, path, product, bbox):
+        """ΔE76 между камнем на кадре (рамка от судьи) и на фото товара (color_box из брифа)."""
+        if not product.color_box or not bbox:
+            return None
+        box = [bbox[k] for k in ('x0', 'y0', 'x1', 'y1')]
+        return round(delta_e(stone_lab(product.photos[0], product.color_box), stone_lab(path, box)), 1)
+
     def review(self, shot, product, path, raw_size, rules, attempt):
         extra = {}
+        cfg = self.brief.judge
+        scene = shot.prompt if cfg.get('check_scene', True) else None
 
         def _run():
             tech = self.technical(path, raw_size)
             mismatches = []
             if not tech:
-                observed = self.inspector.inspect(path, product)
+                observed = self.inspector.inspect(path, product, scene=scene)
                 extra.update(getattr(self.inspector, 'last', {}) or {})
+                de = self.color(path, product, extra.get('bbox'))
+                if de is not None:
+                    extra['color_delta_e'] = de
+                    lim = cfg.get('max_delta_e')
+                    if lim is not None and de > lim:
+                        mismatches.append({'attribute': 'stone_color', 'expected': f'ΔE ≤ {lim}', 'got': f'ΔE {de}',
+                                           'hint': 'keep the exact stone color and saturation of the product photo'})
+                if extra.get('scene_ok') is False:
+                    mismatches.append({'attribute': 'scene', 'expected': 'shot brief', 'got': extra.get('scene_issue', ''),
+                                       'hint': f"follow the shot brief exactly: {extra.get('scene_issue', '')}"})
                 extra['observed'] = observed
                 truth = ground_truth(path)
                 if truth is not None:  # mock: известно, что на кадре на самом деле — меряем точность судьи

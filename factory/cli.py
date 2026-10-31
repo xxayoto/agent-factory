@@ -6,6 +6,7 @@
   factory bench BRIEF --seeds N        mock: серия прогонов без памяти vs с памятью
   factory eval-judge BRIEF --judge claude   точность судьи на кадрах с известной истиной
   factory dashboard                    HTML-дашборд runs/dashboard.html
+  factory rejudge BRIEF RUN_DIR        перепроверить кадры прогона текущим судьёй (без генерации)
   factory stats                        сводка по всем прогонам (runs/index.jsonl)
   factory memory [list|reset]          выученные правила
 """
@@ -97,6 +98,10 @@ def main(argv=None):
     ev.add_argument('--seed', type=int, default=0)
     ev.add_argument('--workers', type=int, default=3)
     ev.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
+    rj = sub.add_parser('rejudge')
+    rj.add_argument('brief')
+    rj.add_argument('run_dir')
+    rj.add_argument('--judge', choices=['claude', 'manual', 'mock'], default='claude')
     db = sub.add_parser('dashboard')
     db.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
     s = sub.add_parser('stats')
@@ -109,7 +114,7 @@ def main(argv=None):
     from .net import use_macos_keychain
     use_macos_keychain()
 
-    if a.cmd in ('validate', 'plan', 'run', 'bench', 'eval-judge'):
+    if a.cmd in ('validate', 'plan', 'run', 'bench', 'eval-judge', 'rejudge'):
         try:
             brief = spec.load(a.brief)
         except spec.SpecError as e:
@@ -138,6 +143,15 @@ def main(argv=None):
             print(f"  {r['path']:<12} {mark:<5} {'ok' if not wrong and not r['error'] else wrong or r['error']}")
         print(json.dumps(m, ensure_ascii=False, indent=2))
         print('файлы:', out)
+    elif a.cmd == 'rejudge':
+        from . import evals
+        kw = {k: v for k, v in (('vocab', brief.judge.get('vocab')), ('describe', brief.judge.get('describe')),
+                                ('model', brief.judge.get('model'))) if v} if a.judge == 'claude' else {}
+        rows, out = evals.rejudge(brief, a.run_dir, a.judge, **kw)
+        for r in rows:
+            why = '; '.join(f"{m['attribute']}: {m['got']}" for m in r['mismatches'])
+            print(f"  {r['shot']:<18} было {r['was']:<9} стало {r['now']:<9} ΔE {r['color_delta_e']}  {why}")
+        print('журнал:', out)
     elif a.cmd == 'dashboard':
         from .dashboard import render
         print(render(a.runs))

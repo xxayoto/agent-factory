@@ -22,7 +22,7 @@ SYSTEM = ('You are a strict visual QA inspector for jewelry product shots. Descr
           'Never assume the product matches a description: generators often turn studs into drops, swap metals or stones.')
 
 
-def schema(attributes, vocab, describe=DESCRIBE):
+def schema(attributes, vocab, describe=DESCRIBE, scene=False):
     props = {}
     for a in attributes:
         v = vocab.get(a)
@@ -30,7 +30,16 @@ def schema(attributes, vocab, describe=DESCRIBE):
         if a in describe:
             props[a]['description'] = describe[a]
     props['notes'] = {'type': 'string', 'description': 'one short sentence: anything wrong with the product'}
-    return {'type': 'object', 'properties': props, 'required': list(attributes) + ['notes']}
+    req = list(attributes) + ['notes']
+    if scene:
+        props['scene_ok'] = {'type': 'boolean', 'description': 'true only if the shot shows the scene described in SHOT BRIEF: '
+                             'composition, pose, how the product is shown (worn / held / lying), setting'}
+        props['scene_issue'] = {'type': 'string', 'description': 'if scene_ok is false: what differs from the brief, one sentence; else empty'}
+        props['bbox'] = {'type': 'object', 'description': 'tight box around the center stone of the most visible earring, '
+                         'fractions of image width/height (0..1)',
+                         'properties': {k: {'type': 'number'} for k in ('x0', 'y0', 'x1', 'y1')}, 'required': ['x0', 'y0', 'x1', 'y1']}
+        req += ['scene_ok', 'scene_issue', 'bbox']
+    return {'type': 'object', 'properties': props, 'required': req}
 
 
 class ClaudeInspector:
@@ -44,7 +53,7 @@ class ClaudeInspector:
         self.describe = {**DESCRIBE, **(describe or {})}
         self.last = {}
 
-    def inspect(self, frame_path, product):
+    def inspect(self, frame_path, product, scene=None):
         d, f = os.path.split(os.path.abspath(frame_path))
         attrs = list(product.attributes)
         prompt = (f'Read the image file {f} with the Read tool. It is a generated advertising shot of jewelry. '
@@ -57,9 +66,11 @@ class ClaudeInspector:
                       ' Compare it with the product photo detail by detail and report what is actually in the generated shot, '
                       'even if it differs from the product.')
             extra = ['--add-dir', os.path.dirname(ref)]
+        if scene:
+            prompt += f' Also check the scene against the SHOT BRIEF: "{scene.strip()}"'
         cmd = ['claude', '-p', prompt, *extra, '--model', self.model, '--output-format', 'json', '--tools', 'Read',
                '--allowedTools', 'Read', '--strict-mcp-config', '--no-session-persistence', '--system-prompt', SYSTEM,
-               '--json-schema', json.dumps(schema(attrs, self.vocab, self.describe))]
+               '--json-schema', json.dumps(schema(attrs, self.vocab, self.describe, bool(scene)))]
         p = subprocess.run(cmd, cwd=d, capture_output=True, text=True, timeout=self.timeout, stdin=subprocess.DEVNULL)
         try:
             j = json.loads(p.stdout)
@@ -70,4 +81,7 @@ class ClaudeInspector:
             raise RuntimeError(f"claude judge: {str(j.get('result'))[:300]}")
         # стоимость по прайсу API — для подписки это расход лимита, а не деньги
         self.last = {'list_usd': j.get('total_cost_usd'), 'sec': (j.get('duration_ms') or 0) / 1000, 'notes': out.pop('notes', '')}
+        for k in ('scene_ok', 'scene_issue', 'bbox'):
+            if k in out:
+                self.last[k] = out.pop(k)
         return out

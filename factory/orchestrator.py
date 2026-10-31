@@ -154,6 +154,8 @@ class Orchestrator:
                 return path
             self.stats['rejected'] += 1
             for m in mism:
+                if m['attribute'] == 'scene':  # сцена — свойство шота, а не товара: в память товара не пишем
+                    continue
                 rule, new = self.memory.learn(product, m['attribute'], m['expected'], m['got'], self.log.run_id)
                 self.stats['learned'] += new
                 self.log.event('memory', shot.id, 'rule_learned' if new else 'rule_hit', rule=rule['id'], hits=rule['hits'])
@@ -193,7 +195,11 @@ class Orchestrator:
         if after is not None:
             self.log.event('orchestrator', '*', 'balance', usd=after)
         real = round(self.balance_before - after, 4) if self.balance_before is not None and after is not None else None
+        des = [e['color_delta_e'] for e in self.log.read() if e.get('color_delta_e') is not None]
+        scenes = [e['scene_ok'] for e in self.log.read() if e.get('scene_ok') is not None]
         return self.log.finish({
+            'color_delta_e_mean': round(sum(des) / len(des), 1) if des else None,
+            'scene_ok_rate': round(sum(scenes) / len(scenes), 3) if scenes else None,
             'project': b.project, 'brief': os.path.relpath(b.path, ROOT),
             'shots': len(b.shots), 'frames_generated': g, 'frames_approved': len(approved), 'frames_rejected': r,
             'reject_rate': round(r / g, 3) if g else 0.0,

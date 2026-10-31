@@ -1,7 +1,8 @@
 """Бэкенды исполняют роли агентов: mock — бесплатно и детерминированно, live — платные API.
 
 Интерфейс бэкенда кадров:  generate(req: dict, out_path) -> dict  (обязательно ключ 'raw_size')
-Интерфейс инспектора судьи: inspect(frame_path, product) -> dict  (наблюдаемые атрибуты)
+Интерфейс инспектора судьи: inspect(frame_path, product, scene=None) -> dict  (наблюдаемые атрибуты;
+                            проверка сцены и рамка камня — в inspector.last)
 Интерфейс видео:            animate(frame_path, out_path, motion, seconds, width, height) -> None
 """
 

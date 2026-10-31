@@ -67,6 +67,6 @@ class MockInspector:
     """Mock-судья «видит» атрибуты, записанные генератором. В live его место займёт vision-модель (M2)."""
     name = 'mock'
 
-    def inspect(self, frame_path, product):
+    def inspect(self, frame_path, product, scene=None):
         with open(frame_path + '.mock.json') as f:
             return json.load(f)['observed']

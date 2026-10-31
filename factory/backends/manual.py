@@ -6,7 +6,7 @@ import sys
 class ManualInspector:
     name = 'manual'
 
-    def inspect(self, frame_path, product):
+    def inspect(self, frame_path, product, scene=None):
         if sys.platform == 'darwin':
             subprocess.run(['open', frame_path], check=False)
         print(f'\nКадр: {frame_path}\nОжидается: {product.attributes}')

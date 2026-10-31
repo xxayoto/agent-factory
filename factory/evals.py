@@ -87,3 +87,30 @@ def run(brief, judge, n, runs_dir, seed=0, workers=3, **judge_kw):
     with open(os.path.join(runs_dir, 'judge_evals.jsonl'), 'a') as f:
         f.write(json.dumps(m, ensure_ascii=False) + '\n')
     return m, rows, out_dir
+
+
+def rejudge(brief, run_dir, judge='claude', **judge_kw):
+    """Перепроверка уже оплаченных кадров прогона текущим судьёй — бесплатно для генерации.
+    Нужна, когда судья улучшился: видно, что новый судья поймал бы на старых кадрах."""
+    from .agents.judge import JudgeAgent
+    from .runlog import RunLog
+    runs_dir, run_id = os.path.split(os.path.abspath(run_dir))
+    old = RunLog(runs_dir, run_id, 'rejudge', resume=True).previous
+    finals = {}
+    for e in old:
+        if e['event'] in ('approved', 'rejected'):
+            finals[e['task']] = e
+    stamp = f'{dt.datetime.now():%Y%m%d-%H%M%S}'
+    log = RunLog(os.path.join(runs_dir, run_id), f'rejudge-{stamp}', 'rejudge')
+    agent = JudgeAgent(log, backends.judge_inspector(judge, **judge_kw), brief)
+    shots = {s.id: s for s in brief.shots}
+    rows = []
+    for task, e in finals.items():
+        shot = shots[task]
+        product = brief.products[shot.product]
+        ok, tech, mism, extra = agent.review(shot, product, e['path'], None, [], e['attempt'])
+        rows.append({'shot': task, 'was': e['event'], 'now': 'approved' if ok else 'rejected', 'mismatches': mism,
+                     'scene_ok': extra.get('scene_ok'), 'scene_issue': extra.get('scene_issue'),
+                     'color_delta_e': extra.get('color_delta_e'), 'bbox': extra.get('bbox')})
+    log._f.close()
+    return rows, log.dir
