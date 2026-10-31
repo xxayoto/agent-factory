@@ -47,19 +47,22 @@ def schema(attributes, vocab, describe=DESCRIBE, scene=False, bbox=False):
 class ClaudeInspector:
     name = 'claude'
 
-    def __init__(self, model='sonnet', vocab=None, describe=None, timeout=180, with_reference=True):
+    def __init__(self, model='sonnet', vocab=None, describe=None, timeout=180, with_reference=True, zoom_below=0.12):
+        """zoom_below — если серьга уже этой доли ширины кадра, второй проход судит по увеличенному фрагменту
+        (замер 01.11: на кадре в полный рост судья выдумал деталь на серьге в ~3 % ширины). None — без зума."""
         if not shutil.which('claude'):
             raise RuntimeError('нет Claude Code CLI (`claude`) в PATH')
-        self.model, self.timeout, self.with_reference = model, timeout, with_reference
+        self.model, self.timeout, self.with_reference, self.zoom_below = model, timeout, with_reference, zoom_below
         self.vocab = {**VOCAB, **(vocab or {})}
         self.describe = {**DESCRIBE, **(describe or {})}
         self.last = {}
 
-    def inspect(self, frame_path, product, scene=None):
+    def _call(self, frame_path, product, scene=None, stone_box=False, earring_box=False, zoomed=False):
         d, f = os.path.split(os.path.abspath(frame_path))
         attrs = list(product.attributes)
-        prompt = (f'Read the image file {f} with the Read tool. It is a generated advertising shot of jewelry. '
-                  f'Report these attributes of the jewelry you SEE in it: {", ".join(attrs)}.')
+        what = ('It is a ZOOMED CROP of a generated advertising shot, showing the earring up close. ' if zoomed
+                else 'It is a generated advertising shot of jewelry. ')
+        prompt = f'Read the image file {f} with the Read tool. {what}Report these attributes of the jewelry you SEE in it: {", ".join(attrs)}.'
         extra = []
         if self.with_reference:
             ref = os.path.abspath(product.photos[0])
@@ -70,9 +73,15 @@ class ClaudeInspector:
             extra = ['--add-dir', os.path.dirname(ref)]
         if scene:
             prompt += f' Also check the scene against the SHOT BRIEF: "{scene.strip()}"'
+        sc = schema(attrs, self.vocab, self.describe, bool(scene), stone_box)
+        if earring_box:
+            sc['properties']['earring_box'] = {
+                'type': 'object', 'description': 'tight box around the whole most visible earring, fractions of image width/height (0..1)',
+                'properties': {k: {'type': 'number'} for k in ('x0', 'y0', 'x1', 'y1')}, 'required': ['x0', 'y0', 'x1', 'y1']}
+            sc['required'].append('earring_box')
         cmd = ['claude', '-p', prompt, *extra, '--model', self.model, '--output-format', 'json', '--tools', 'Read',
                '--allowedTools', 'Read', '--strict-mcp-config', '--no-session-persistence', '--system-prompt', SYSTEM,
-               '--json-schema', json.dumps(schema(attrs, self.vocab, self.describe, bool(scene), bool(product.color_box)))]
+               '--json-schema', json.dumps(sc)]
         p = subprocess.run(cmd, cwd=d, capture_output=True, text=True, timeout=self.timeout, stdin=subprocess.DEVNULL)
         try:
             j = json.loads(p.stdout)
@@ -82,8 +91,43 @@ class ClaudeInspector:
         if j.get('is_error') or not isinstance(out, dict):
             raise RuntimeError(f"claude judge: {str(j.get('result'))[:300]}")
         # стоимость по прайсу API — для подписки это расход лимита, а не деньги
-        self.last = {'list_usd': j.get('total_cost_usd'), 'sec': (j.get('duration_ms') or 0) / 1000, 'notes': out.pop('notes', '')}
-        for k in ('scene_ok', 'scene_issue', 'bbox'):
+        meta = {'list_usd': j.get('total_cost_usd') or 0.0, 'sec': (j.get('duration_ms') or 0) / 1000, 'notes': out.pop('notes', '')}
+        for k in ('scene_ok', 'scene_issue', 'bbox', 'earring_box'):
             if k in out:
-                self.last[k] = out.pop(k)
+                meta[k] = out.pop(k)
+        return out, meta
+
+    def inspect(self, frame_path, product, scene=None):
+        out, meta = self._call(frame_path, product, scene, bool(product.color_box), self.zoom_below is not None)
+        box = meta.get('earring_box')
+        if box and self.zoom_below is not None and 0 < box['x1'] - box['x0'] < self.zoom_below:
+            crop = zoom_crop(frame_path, box)
+            try:
+                out2, meta2 = self._call(crop, product, zoomed=True)
+            finally:
+                shutil.rmtree(os.path.dirname(crop), ignore_errors=True)
+            # спорный признак: проходы расходятся (зум теряет контекст света, общий план — детали) —
+            # такой признак не повод для брака, а вопрос человеку (замер 01.11: r29 и r33)
+            disputed = {a: [out.get(a), out2.get(a)] for a in product.attributes if out.get(a) != out2.get(a)}
+            meta.update({'zoomed': True, 'first_pass': out, 'disputed': disputed, 'notes': meta2['notes'],
+                         'list_usd': meta['list_usd'] + meta2['list_usd'], 'sec': meta['sec'] + meta2['sec']})
+            out = out2
+        self.last = meta
         return out
+
+
+def zoom_crop(frame_path, box, pad=1.5, size=1024):
+    """Фрагмент вокруг серьги (с запасом pad от её размера), увеличенный до size по длинной стороне, во временной папке."""
+    import tempfile
+    from PIL import Image
+    im = Image.open(frame_path).convert('RGB')
+    W, H = im.size
+    cx, cy = (box['x0'] + box['x1']) / 2 * W, (box['y0'] + box['y1']) / 2 * H
+    half = max((box['x1'] - box['x0']) * W, (box['y1'] - box['y0']) * H) * (0.5 + pad)
+    c = im.crop((int(max(0, cx - half)), int(max(0, cy - half)), int(min(W, cx + half)), int(min(H, cy + half))))
+    k = size / max(c.size)
+    c = c.resize((max(1, int(c.width * k)), max(1, int(c.height * k))), Image.LANCZOS)
+    d = tempfile.mkdtemp(prefix='judge-zoom-')
+    path = os.path.join(d, 'zoom.png')
+    c.save(path)
+    return path

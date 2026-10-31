@@ -98,6 +98,8 @@ def main(argv=None):
     ev.add_argument('--seed', type=int, default=0)
     ev.add_argument('--workers', type=int, default=3)
     ev.add_argument('--labels', help='YAML с ручной разметкой реальных кадров (вместо синтетики)')
+    ev.add_argument('--ids', help='только эти id из разметки, через запятую (точечная перепроверка)')
+    ev.add_argument('--no-zoom', action='store_true', help='без второго прохода по увеличенному фрагменту')
     ev.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
     rj = sub.add_parser('rejudge')
     rj.add_argument('brief')
@@ -139,11 +141,14 @@ def main(argv=None):
         kw = {'model': a.model} if a.judge == 'claude' else {}
         if a.labels:
             kw.update({k: v for k, v in (('vocab', brief.judge.get('vocab')), ('describe', brief.judge.get('describe'))) if v})
-            m, rows, out = evals.run_labeled(brief, a.labels, a.runs, a.workers, **kw)
+            if a.no_zoom:
+                kw['zoom_below'] = None
+            ids = set(a.ids.split(',')) if a.ids else None
+            m, rows, out = evals.run_labeled(brief, a.labels, a.runs, a.workers, ids, **kw)
             for r in rows:
                 mark = 'OK ' if r['label_ok'] == r['judge_ok'] else 'ERR'
                 print(f"  {mark} {r['id']:<6} разметка {'чист' if r['label_ok'] else 'брак'} судья {'чист' if r['judge_ok'] else 'брак'} "
-                      f"ΔE {r['delta_e']} {r['wrong'] or ''} {r['error'] or ''}")
+                      f"ΔE {r['delta_e']} {'зум ' if r.get('zoomed') else ''}{'спор ' + str(r['disputed']) + ' ' if r.get('disputed') else ''}{r['wrong'] or ''} {r['error'] or ''}")
             print(json.dumps(m, ensure_ascii=False, indent=2))
             print('файлы:', out)
             return

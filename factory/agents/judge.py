@@ -62,8 +62,9 @@ class JudgeAgent(Agent):
                     extra['color_delta_e'] = de
                     lim = cfg.get('max_delta_e')
                     if lim is not None and de > lim:
-                        mismatches.append({'attribute': 'stone_color', 'expected': f'ΔE ≤ {lim}', 'got': f'ΔE {de}',
-                                           'hint': 'keep the exact stone color and saturation of the product photo'})
+                        # ΔE зависит от рамки модели (на постере 01.11 она попала на красный фон). Сам по себе он не бракует:
+                        # согласна модель, что камень не тот, — брак (это ловит сверка атрибутов), иначе — вопрос человеку
+                        extra.setdefault('disputed', {})['stone_color'] = [f'ΔE {de}', 'модель: камень верный']
                 if extra.get('scene_ok') is False:
                     mismatches.append({'attribute': 'scene', 'expected': 'shot brief', 'got': extra.get('scene_issue', ''),
                                        'hint': f"follow the shot brief exactly: {extra.get('scene_issue', '')}"})
@@ -73,14 +74,17 @@ class JudgeAgent(Agent):
                     exp = product.attributes
                     extra['truth_attrs_exact'] = all(observed.get(a) == truth.get(a) for a in exp)
                     extra['truth_verdict_ok'] = (truth == exp) == all(observed.get(a) == exp[a] for a in exp)
+                disputed = extra.get('disputed') or {}
                 for attr, exp in product.attributes.items():
                     got = observed.get(attr)
-                    if got != exp:
+                    if got != exp and attr not in disputed:
                         mismatches.append({'attribute': attr, 'expected': exp, 'got': got,
                                            'hint': f'{attr} must be {exp}, previous attempt showed {got}'})
             return tech, mismatches
         tech, mismatches = self.timed(shot.id, _run)
         ok = not tech and not mismatches
+        if ok and extra.get('disputed'):
+            self.log.event(self.name, shot.id, 'needs_review', attempt=attempt, path=path, disputed=extra['disputed'])
         self.log.event(self.name, shot.id, 'approved' if ok else 'rejected', attempt=attempt, path=path,
                        technical=tech, mismatches=mismatches, checklist=sorted(product.attributes),
                        rules_checked=[r['id'] for r in rules], judge=self.inspector.name, **extra)

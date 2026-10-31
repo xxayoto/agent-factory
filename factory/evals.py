@@ -116,12 +116,14 @@ def rejudge(brief, run_dir, judge='claude', **judge_kw):
     return rows, log.dir
 
 
-def run_labeled(brief, labels_path, runs_dir, workers=3, **judge_kw):
+def run_labeled(brief, labels_path, runs_dir, workers=3, ids=None, **judge_kw):
     """Замер судьи на реальных кадрах с ручной разметкой: ok — верный ли товар на кадре по мнению человека."""
     import yaml
     from .color import delta_e, stone_lab
     with open(labels_path) as f:
         labels = yaml.safe_load(f)['items']
+    if ids:
+        labels = [it for it in labels if it.get('id') in ids]
     stamp = f'{dt.datetime.now():%Y%m%d-%H%M%S}'
     out_dir = os.path.join(runs_dir, f'judge-labeled-{stamp}')
     os.makedirs(out_dir, exist_ok=True)
@@ -136,13 +138,17 @@ def run_labeled(brief, labels_path, runs_dir, workers=3, **judge_kw):
         except Exception as e:
             got, err = {}, str(e)[:200]
         last = dict(insp.last)
-        wrong = {a: got.get(a) for a, v in prod.attributes.items() if got.get(a) != v}
+        disputed = last.get('disputed') or {}
+        wrong = {a: got.get(a) for a, v in prod.attributes.items() if got.get(a) != v and a not in disputed}
         de = None
         if not err and prod.color_box and last.get('bbox'):
             b = last['bbox']
             de = round(delta_e(stone_lab(prod.photos[0], prod.color_box), stone_lab(it['path'], [b[k] for k in ('x0', 'y0', 'x1', 'y1')])), 1)
-        flagged = bool(wrong) or (lim is not None and de is not None and de > lim)
+        if lim is not None and de is not None and de > lim and not wrong:
+            disputed = {**disputed, 'stone_color': [f'ΔE {de}', 'модель: камень верный']}  # см. JudgeAgent.review
+        flagged = bool(wrong)
         return {'id': it.get('id'), 'product': it['product'], 'label_ok': it['ok'], 'judge_ok': not flagged, 'wrong': wrong,
+                'zoomed': last.get('zoomed', False), 'first_pass': last.get('first_pass'), 'disputed': disputed,
                 'delta_e': de, 'notes': last.get('notes'), 'label_note': it.get('note', ''), 'error': err,
                 'sec': round(time.time() - t, 1), 'list_usd': last.get('list_usd')}
 
@@ -154,6 +160,8 @@ def run_labeled(brief, labels_path, runs_dir, workers=3, **judge_kw):
     usd = [r['list_usd'] for r in ok_rows if r['list_usd'] is not None]
     m = {
         'eval_id': f'judge-labeled-{stamp}', 'judge': 'claude', 'model': judge_kw.get('model'), 'labels': os.path.basename(labels_path),
+        'subset': sorted(ids) if ids else None, 'zoomed': sum(r.get('zoomed', False) for r in rows), 'max_delta_e': lim,
+        'needs_review': sum(bool(r.get('disputed')) for r in rows),
         'frames': len(rows), 'errors': len(rows) - len(ok_rows), 'defective': len(neg), 'clean': len(pos),
         'verdict_accuracy': round(sum(r['label_ok'] == r['judge_ok'] for r in ok_rows) / len(ok_rows), 3) if ok_rows else None,
         'defect_recall': round(sum(not r['judge_ok'] for r in neg) / len(neg), 3) if neg else None,

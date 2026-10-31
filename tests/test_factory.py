@@ -199,6 +199,16 @@ class TestJudgeEval(Base):
         drop = earrings({'earring_type': 'drop', 'metal': 'gold', 'stone': 'pearl'})
         self.assertNotEqual(stud.getbbox(), drop.getbbox())  # у подвески выше рамка — дефект виден глазами
 
+    def test_zoom_crop_centers_small_earring(self):
+        from factory.backends.claude_judge import zoom_crop
+        p = os.path.join(self.tmp, 'full.png')
+        im = Image.new('RGB', (1800, 2400), (200, 190, 180))
+        im.paste(Image.new('RGB', (54, 54), (255, 0, 0)), (1300, 400))  # «серьга» ~3 % ширины
+        im.save(p)
+        z = Image.open(zoom_crop(p, {'x0': 1300 / 1800, 'y0': 400 / 2400, 'x1': 1354 / 1800, 'y1': 454 / 2400}))
+        self.assertEqual(max(z.size), 1024)
+        self.assertEqual(z.getpixel((z.width // 2, z.height // 2)), (255, 0, 0))  # серьга в центре и крупно
+
     def test_claude_judge_schema(self):
         from factory.backends.claude_judge import VOCAB, schema
         sc = schema(['earring_type', 'metal', 'engraving'], VOCAB)
