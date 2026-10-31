@@ -1,7 +1,8 @@
 # Какой бэкенд выполняет каждую роль в режиме live. Ключи — только из окружения или ~/.config.
 live:
-  frame: runninghub_seedream      # factory/backends/runninghub.py, проверенный путь из job_search/workflows/rh_seedream.py
+  frame: wavespeed                # Seedream 5.0 Pro Edit; runninghub_seedream — запасной (кошелёк RH пуст на 31.10)
   video: runninghub_h3            # M2: перенос rh_h3.py
-  judge: manual                   # M2: vision-LLM судья; до этого — человек в терминале
+  judge: claude                   # Claude Sonnet через claude -p; manual — человек в терминале
 wavespeed:
-  frame_model: null               # id модели WaveSpeed указать вручную (list_models), не угадывать
+  frame_model: bytedance/seedream-v5.0-pro/edit   # из list_models, $0.043–0.048 за кадр 1k
+  resolution: 1k

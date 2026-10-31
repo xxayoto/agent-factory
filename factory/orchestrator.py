@@ -47,7 +47,7 @@ def plan(brief):
     n_frames, n_vid = len(brief.shots), sum(1 for t in tasks if t[0] == 'video')
     retries = brief.limits['max_retries']
     est = {}
-    for mode, fb, vb in (('mock', 'mock', 'mock'), ('live', 'runninghub_seedream', 'runninghub_h3')):
+    for mode, fb, vb in (('mock', 'mock', 'mock'), ('live', live_config()['live']['frame'], 'local_kenburns')):
         lo = n_frames * b.price('frame', fb) + n_vid * b.price('video', vb)
         hi = n_frames * (1 + retries) * b.price('frame', fb) + n_vid * b.price('video', vb)
         est[mode] = (round(lo, 3), round(hi, 3))
@@ -55,7 +55,7 @@ def plan(brief):
 
 
 class Orchestrator:
-    def __init__(self, brief, mode='mock', seed=0, memory_path=None, runs_dir=None, allow_spend=None, defect_rate=0.3, judge=None):
+    def __init__(self, brief, mode='mock', seed=0, memory_path=None, runs_dir=None, allow_spend=None, defect_rate=0.3, judge=None, resume=None):
         self.brief, self.mode = brief, mode
         self.memory = Memory(memory_path) if memory_path else Memory()
         self.runs_dir = os.path.abspath(runs_dir or os.path.join(ROOT, 'runs'))
@@ -65,19 +65,28 @@ class Orchestrator:
                 raise SystemExit('live-режим тратит деньги: нужен явный --allow-spend <USD>')
             limit = min(limit, float(allow_spend))
             cfg = live_config()
-            frame_be = backends.frame_backend(cfg['live']['frame'], model=cfg.get('wavespeed', {}).get('frame_model'))
-            inspector = backends.judge_inspector(judge or cfg['live']['judge'])
+            ws = cfg.get('wavespeed', {})
+            frame_be = backends.frame_backend(cfg['live']['frame'], model=ws.get('frame_model'), resolution=ws.get('resolution', '1k'))
+            inspector = self._inspector(judge or cfg['live']['judge'])
             self.video_be, self.video_price = backends.video_backend('local_kenburns'), 'local_kenburns'
         else:
             frame_be = backends.frame_backend('mock', seed=seed, defect_rate=defect_rate)
-            inspector = backends.judge_inspector(judge or 'mock')
+            inspector = self._inspector(judge or 'mock')
             self.video_be, self.video_price = backends.video_backend('mock'), 'mock'
         self.budget = Budget(limit)
-        run_id = f"{dt.datetime.now():%Y%m%d-%H%M%S}-{brief.project}-{uuid.uuid4().hex[:4]}"
-        self.log = RunLog(self.runs_dir, run_id, mode)
+        if resume:
+            resume = os.path.abspath(resume)
+            self.runs_dir, run_id = os.path.dirname(resume), os.path.basename(resume)
+        else:
+            run_id = f"{dt.datetime.now():%Y%m%d-%H%M%S}-{brief.project}-{uuid.uuid4().hex[:4]}"
+        self.log = RunLog(self.runs_dir, run_id, mode, resume=bool(resume))
         self.out = os.path.join(self.log.dir, 'out')
         os.makedirs(self.out, exist_ok=True)
         self.frame = FrameAgent(self.log, frame_be, self.budget, brief)
+        prev_bal = [e['usd'] for e in self.log.previous if e['event'] == 'balance']
+        self.balance_before = prev_bal[0] if prev_bal else self._balance()
+        if self.balance_before is not None and not prev_bal:
+            self.log.event('orchestrator', '*', 'balance', usd=self.balance_before)
         self.judge = JudgeAgent(self.log, inspector, brief)
         self.card = CardAgent(self.log, brief)
         self.video = VideoAgent(self.log, self.video_be, self.budget, brief)
@@ -85,12 +94,41 @@ class Orchestrator:
         self.stats = {'generated': 0, 'rejected': 0, 'first_pass': 0, 'learned': 0, 'rules_used': set(),
                       'judged': 0, 'judge_verdict_ok': 0, 'judge_attrs_exact': 0, 'judge_list_usd': 0.0}
         self.stopped_by_budget = False
+        self.done = {}
+        self._restore()
+
+    def _restore(self):
+        """--resume: статистика и принятые кадры из журнала прерванного прогона; потраченное идёт в бюджет."""
+        for e in self.log.previous:
+            ev = e['event']
+            if ev == 'generated':
+                self.stats['generated'] += 1
+                self.log.add_cost(e.get('cost_usd') or 0.0)
+                self.budget.spent += e.get('cost_usd') or 0.0
+            elif ev == 'approved':
+                self.done[e['task']] = e['path']
+                self.stats['first_pass'] += e['attempt'] == 1
+            elif ev == 'rejected':
+                self.stats['rejected'] += 1
+            elif ev == 'rule_learned':
+                self.stats['learned'] += 1
+            if e.get('agent') == 'judge':
+                self.stats['judge_list_usd'] += e.get('list_usd') or 0.0
+        if self.log.previous:
+            self.log.event('orchestrator', '*', 'resumed', approved=sorted(self.done), spent_usd=round(self.budget.spent, 4))
 
     def shot_loop(self, shot):
         """Генерация → судья → перегенерация с замечаниями, пока не примут или не кончатся попытки."""
+        if shot.id in self.done:
+            return self.done[shot.id]
         product = self.brief.products[shot.product]
         feedback = []
+        judged = {(e['task'], e['attempt']) for e in self.log.previous if e['event'] in ('approved', 'rejected')}
         for attempt in range(1, self.brief.limits['max_retries'] + 2):
+            if (shot.id, attempt) in judged:  # эта попытка уже отбракована в прерванном прогоне
+                feedback = next(e['mismatches'] for e in self.log.previous
+                                if e['event'] == 'rejected' and e['task'] == shot.id and e['attempt'] == attempt)
+                continue
             rules = self.memory.for_product(product)
             self.stats['rules_used'].update(r['id'] for r in rules)
             try:
@@ -99,7 +137,11 @@ class Orchestrator:
                 self.stopped_by_budget = True
                 self.log.event('orchestrator', shot.id, 'budget_stop', reason=str(e))
                 return None
-            self.stats['generated'] += 1
+            except Exception as e:  # сеть/провайдер: шот помечается сбойным, остальные шоты идут дальше
+                self.log.event('orchestrator', shot.id, 'error', attempt=attempt, error=f'{type(e).__name__}: {str(e)[:300]}')
+                return None
+            if not info.get('reused'):
+                self.stats['generated'] += 1
             ok, tech, mism, extra = self.judge.review(shot, product, path, info.get('raw_size'), rules, attempt)
             if 'truth_verdict_ok' in extra:
                 self.stats['judged'] += 1
@@ -147,12 +189,17 @@ class Orchestrator:
                 self.log.event('montage', 'montage', 'failed', error=str(e)[:300])
 
         g, r = self.stats['generated'], self.stats['rejected']
+        after = self._balance()
+        if after is not None:
+            self.log.event('orchestrator', '*', 'balance', usd=after)
+        real = round(self.balance_before - after, 4) if self.balance_before is not None and after is not None else None
         return self.log.finish({
             'project': b.project, 'brief': os.path.relpath(b.path, ROOT),
             'shots': len(b.shots), 'frames_generated': g, 'frames_approved': len(approved), 'frames_rejected': r,
             'reject_rate': round(r / g, 3) if g else 0.0,
             'first_pass_yield': round(self.stats['first_pass'] / len(b.shots), 3),
             'failed_shots': [s.id for s in b.shots if not frames[s.id]],
+            'resumed': bool(self.log.previous),
             'rules_applied': len(self.stats['rules_used']), 'rules_learned': self.stats['learned'],
             'cards': len(cards), 'videos': len(videos), 'montage': montage and os.path.relpath(montage, self.log.dir),
             'stopped_by_budget': self.stopped_by_budget, 'budget_usd': self.budget.limit,
@@ -160,7 +207,27 @@ class Orchestrator:
             'judge_verdict_accuracy': round(self.stats['judge_verdict_ok'] / self.stats['judged'], 3) if self.stats['judged'] else None,
             'judge_attrs_exact': round(self.stats['judge_attrs_exact'] / self.stats['judged'], 3) if self.stats['judged'] else None,
             'judge_list_usd': round(self.stats['judge_list_usd'], 4),
+            'real_spend_usd': real,
         })
+
+    def _inspector(self, name):
+        kw = {}
+        if name == 'claude':
+            kw = {'vocab': self.brief.judge.get('vocab'), 'describe': self.brief.judge.get('describe')}
+            if self.brief.judge.get('model'):
+                kw['model'] = self.brief.judge['model']
+        return backends.judge_inspector(name, **kw)
+
+    def _balance(self):
+        """Реальный баланс провайдера (live): разница до/после — фактические траты, а не оценка по прайсу."""
+        fn = getattr(self.frame.backend, 'balance', None)
+        if self.mode != 'live' or not fn:
+            return None
+        try:
+            return fn()
+        except Exception as e:
+            self.log.event('orchestrator', '*', 'balance_failed', error=str(e)[:200])
+            return None
 
     def _video(self, shot, frame):
         try:

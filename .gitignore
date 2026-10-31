@@ -22,3 +22,6 @@ __pycache__/
 
 # system
 .DS_Store
+
+# брифы с материалами клиентов — только локально
+briefs/local/

@@ -1,7 +1,7 @@
 """Агент карточек: логотип бренда и инфо-плашка поверх принятого кадра (перенос job_search/workflows/card.py)."""
 import os
 
-from PIL import Image, ImageDraw, ImageFilter, ImageFont
+from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
 
 from .base import Agent
 
@@ -15,6 +15,12 @@ def font(size, idx=7):
         return ImageFont.load_default(size=int(size))
 
 
+def logo_color(im, box):
+    """Белый логотип на светлом фоне не читается (найдено на live-прогоне 31.10: кремовый шёлк) — берём тёмный."""
+    lum = ImageStat.Stat(im.convert('L').crop(tuple(int(v) for v in box))).mean[0]
+    return (40, 32, 26) if lum > 165 else (255, 255, 255)
+
+
 def draw_logo(im, name, tagline):
     W, H = im.size
     layer = Image.new('RGBA', im.size, (0, 0, 0, 0))
@@ -22,12 +28,14 @@ def draw_logo(im, name, tagline):
     f1, f2 = font(W * 0.075, 5), font(W * 0.032)
     t1, t2 = d.textlength(name, font=f1), d.textlength(tagline, font=f2)
     y = W * 0.06
-    d.text(((W - t1) / 2, y), name, font=f1, fill=(255, 255, 255, 255))
+    c = logo_color(im, ((W - t1) / 2, y, (W + t1) / 2, y + f1.size * 1.1 + f2.size * 1.3))
+    d.text(((W - t1) / 2, y), name, font=f1, fill=(*c, 255))
     if tagline:
-        d.text(((W - t2) / 2, y + f1.size * 1.1), tagline, font=f2, fill=(255, 255, 255, 240))
+        d.text(((W - t2) / 2, y + f1.size * 1.1), tagline, font=f2, fill=(*c, 240))
     sh = Image.new('RGBA', im.size, (0, 0, 0, 0))
-    sh.putalpha(layer.split()[3].filter(ImageFilter.GaussianBlur(W * 0.006)).point(lambda v: int(v * 0.45)))
-    im.alpha_composite(sh)
+    if c == (255, 255, 255):  # тень нужна только светлому логотипу
+        sh.putalpha(layer.split()[3].filter(ImageFilter.GaussianBlur(W * 0.006)).point(lambda v: int(v * 0.45)))
+        im.alpha_composite(sh)
     im.alpha_composite(layer)
 
 

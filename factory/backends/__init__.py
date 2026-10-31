@@ -15,7 +15,7 @@ def frame_backend(name, **kw):
         return SeedreamFrames()
     if name == 'wavespeed':
         from .wavespeed import WaveSpeedFrames
-        return WaveSpeedFrames(kw['model'])
+        return WaveSpeedFrames(kw['model'], kw.get('resolution', '1k'))
     raise ValueError(f'неизвестный бэкенд кадров: {name}')
 
 

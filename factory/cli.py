@@ -83,6 +83,7 @@ def main(argv=None):
     r.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
     r.add_argument('--defect-rate', type=float, default=0.3, help='mock: вероятность дрейфа атрибута')
     r.add_argument('--judge', choices=['mock', 'claude', 'manual'], help='кто судит кадры (по умолчанию mock / из config)')
+    r.add_argument('--resume', metavar='RUN_DIR', help='продолжить прерванный прогон: оплаченные кадры не генерируются заново')
     bn = sub.add_parser('bench')
     bn.add_argument('brief')
     bn.add_argument('--seeds', type=int, default=10)
@@ -105,6 +106,8 @@ def main(argv=None):
     m.add_argument('action', choices=['list', 'reset'], nargs='?', default='list')
     m.add_argument('--memory', default=DEFAULT_PATH)
     a = ap.parse_args(argv)
+    from .net import use_macos_keychain
+    use_macos_keychain()
 
     if a.cmd in ('validate', 'plan', 'run', 'bench', 'eval-judge'):
         try:
@@ -119,7 +122,7 @@ def main(argv=None):
             print(f'  {t[0]:<12} {t[1]}')
         print(f"стоимость mock (симуляция): ${est['mock'][0]}–{est['mock'][1]}; live (оценка по config/prices.yaml): ${est['live'][0]}–{est['live'][1]}")
     elif a.cmd == 'run':
-        o = Orchestrator(brief, a.mode, a.seed, a.memory, a.runs, a.allow_spend, a.defect_rate, a.judge)
+        o = Orchestrator(brief, a.mode, a.seed, a.memory, a.runs, a.allow_spend, a.defect_rate, a.judge, a.resume)
         res = o.run()
         print(open(os.path.join(o.log.dir, 'report.md')).read())
         print('журнал:', o.log.dir)

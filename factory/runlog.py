@@ -6,16 +6,25 @@ import time
 
 
 class RunLog:
-    def __init__(self, runs_dir, run_id, mode):
+    def __init__(self, runs_dir, run_id, mode, resume=False):
         self.dir = os.path.join(runs_dir, run_id)
         self.runs_dir = runs_dir
         os.makedirs(self.dir, exist_ok=True)
         self.run_id, self.mode = run_id, mode
-        self.t0 = time.time()
+        self.previous = self.read() if resume else []
+        # время продолжает счёт с последнего события прерванного прогона
+        self.t0 = time.time() - (self.previous[-1]['t'] if self.previous else 0)
         self.lock = threading.Lock()
         self.cost = 0.0
         self.agent_time = {}
         self._f = open(os.path.join(self.dir, 'events.jsonl'), 'a')
+
+    def read(self):
+        p = os.path.join(self.dir, 'events.jsonl')
+        if not os.path.exists(p):
+            return []
+        with open(p) as f:
+            return [json.loads(l) for l in f if l.strip()]
 
     def event(self, agent, task, event, **data):
         rec = {'t': round(time.time() - self.t0, 3), 'agent': agent, 'task': task, 'event': event, **data}
@@ -59,7 +68,7 @@ def render_report(m):
         f"- судья: {m.get('judge')}" + (f", верный вердикт {m['judge_verdict_accuracy']:.0%}, атрибуты точно {m['judge_attrs_exact']:.0%}"
                                         if m.get('judge_verdict_accuracy') is not None else ''),
         f"- карточек: {m['cards']}, видео: {m['videos']}, монтаж: {m['montage'] or 'нет'}",
-        f"- стоимость: ${m['cost_usd']:.3f}{sim}",
+        f"- стоимость: ${m['cost_usd']:.3f}{sim}" + (f"; по балансу провайдера: ${m['real_spend_usd']:.3f}" if m.get('real_spend_usd') is not None else ''),
         f"- время: {m['wall_sec']} с; по агентам: {m['agent_sec']}",
         '',
     ]

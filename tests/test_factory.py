@@ -148,6 +148,42 @@ class TestPipeline(Base):
         self.assertLess(warm, cold)
 
 
+class TestResilience(Base):
+    def test_one_shot_failure_does_not_stop_run(self):
+        o = Orchestrator(self.brief(cards=False, videos=False, montage=False), 'mock', 0,
+                         os.path.join(self.tmp, 'm.yaml'), os.path.join(self.tmp, 'runs'))
+        real = o.frame.backend.generate
+
+        def flaky(req, out):
+            if req['shot'] == 's2-hoop':
+                raise TimeoutError('The read operation timed out')
+            return real(req, out)
+        o.frame.backend.generate = flaky
+        m = o.run()
+        self.assertEqual(m['failed_shots'], ['s2-hoop'])
+        self.assertEqual(m['frames_approved'] + len(m['failed_shots']), 4)
+
+    def test_resume_does_not_pay_twice(self):
+        import json
+        b = self.brief(cards=False, videos=False, montage=False)
+        runs, mem = os.path.join(self.tmp, 'runs'), os.path.join(self.tmp, 'm.yaml')
+        o = Orchestrator(b, 'mock', 0, mem, runs)
+        m1 = o.run()
+        ev_path = os.path.join(o.log.dir, 'events.jsonl')
+        with open(ev_path) as f:
+            ev = [json.loads(l) for l in f]
+        # «падение» перед вердиктом по последнему шоту: кадр на диске, вердикта и итогов нет
+        last = max(i for i, e in enumerate(ev) if e['event'] == 'approved')
+        with open(ev_path, 'w') as f:
+            f.write(''.join(json.dumps(e, ensure_ascii=False) + '\n' for e in ev[:last]))
+        o2 = Orchestrator(b, 'mock', 0, mem, runs, resume=o.log.dir)
+        m2 = o2.run()
+        self.assertEqual(m2['frames_generated'], m1['frames_generated'])
+        self.assertAlmostEqual(m2['cost_usd'], m1['cost_usd'])
+        self.assertEqual(m2['frames_approved'], m1['frames_approved'])
+        self.assertTrue(m2['resumed'])
+
+
 class TestJudgeEval(Base):
     def test_mock_judge_eval_has_known_truth(self):
         from factory import evals
@@ -169,6 +205,13 @@ class TestJudgeEval(Base):
         self.assertEqual(sc['properties']['earring_type']['enum'], ['stud', 'hoop', 'drop'])
         self.assertEqual(sc['properties']['engraving'], {'type': 'string'})
         self.assertIn('notes', sc['required'])
+
+
+class TestCard(unittest.TestCase):
+    def test_logo_contrast(self):
+        from factory.agents.card import logo_color
+        self.assertNotEqual(logo_color(Image.new('RGB', (100, 100), (245, 238, 225)), (0, 0, 100, 100)), (255, 255, 255))
+        self.assertEqual(logo_color(Image.new('RGB', (100, 100), (60, 40, 30)), (0, 0, 100, 100)), (255, 255, 255))
 
 
 class TestSubtitles(unittest.TestCase):

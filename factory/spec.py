@@ -40,6 +40,7 @@ class Brief:
     shots: list
     outputs: dict
     limits: dict = field(default_factory=dict)
+    judge: dict = field(default_factory=dict)
 
     @property
     def aspect(self):
@@ -95,4 +96,4 @@ def load(path):
     outputs = {'cards': True, 'videos': True, 'montage': True, **(raw.get('outputs') or {})}
     limits = {'max_retries': 2, 'workers': 3, 'budget_usd': 2.0, **(raw.get('limits') or {})}
     return Brief(os.path.abspath(path), _req(raw, 'project', 'бриф'), raw.get('brand') or {}, width, height,
-                 products, references, shots, outputs, limits)
+                 products, references, shots, outputs, limits, raw.get('judge') or {})

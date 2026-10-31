@@ -22,13 +22,13 @@ SYSTEM = ('You are a strict visual QA inspector for jewelry product shots. Descr
           'Never assume the product matches a description: generators often turn studs into drops, swap metals or stones.')
 
 
-def schema(attributes, vocab):
+def schema(attributes, vocab, describe=DESCRIBE):
     props = {}
     for a in attributes:
         v = vocab.get(a)
         props[a] = {'type': 'string', 'enum': v} if v else {'type': 'string'}
-        if a in DESCRIBE:
-            props[a]['description'] = DESCRIBE[a]
+        if a in describe:
+            props[a]['description'] = describe[a]
     props['notes'] = {'type': 'string', 'description': 'one short sentence: anything wrong with the product'}
     return {'type': 'object', 'properties': props, 'required': list(attributes) + ['notes']}
 
@@ -36,18 +36,19 @@ def schema(attributes, vocab):
 class ClaudeInspector:
     name = 'claude'
 
-    def __init__(self, model='sonnet', vocab=None, timeout=180, with_reference=True):
+    def __init__(self, model='sonnet', vocab=None, describe=None, timeout=180, with_reference=True):
         if not shutil.which('claude'):
             raise RuntimeError('нет Claude Code CLI (`claude`) в PATH')
         self.model, self.timeout, self.with_reference = model, timeout, with_reference
         self.vocab = {**VOCAB, **(vocab or {})}
+        self.describe = {**DESCRIBE, **(describe or {})}
         self.last = {}
 
     def inspect(self, frame_path, product):
         d, f = os.path.split(os.path.abspath(frame_path))
         attrs = list(product.attributes)
-        prompt = (f'Read the image file {f} with the Read tool. It is a generated advertising shot of earrings. '
-                  f'Report these attributes of the earrings you SEE in it: {", ".join(attrs)}.')
+        prompt = (f'Read the image file {f} with the Read tool. It is a generated advertising shot of jewelry. '
+                  f'Report these attributes of the jewelry you SEE in it: {", ".join(attrs)}.')
         extra = []
         if self.with_reference:
             ref = os.path.abspath(product.photos[0])
@@ -58,7 +59,7 @@ class ClaudeInspector:
             extra = ['--add-dir', os.path.dirname(ref)]
         cmd = ['claude', '-p', prompt, *extra, '--model', self.model, '--output-format', 'json', '--tools', 'Read',
                '--allowedTools', 'Read', '--strict-mcp-config', '--no-session-persistence', '--system-prompt', SYSTEM,
-               '--json-schema', json.dumps(schema(attrs, self.vocab))]
+               '--json-schema', json.dumps(schema(attrs, self.vocab, self.describe))]
         p = subprocess.run(cmd, cwd=d, capture_output=True, text=True, timeout=self.timeout, stdin=subprocess.DEVNULL)
         try:
             j = json.loads(p.stdout)

@@ -27,14 +27,24 @@ class FrameAgent(Agent):
     def run(self, shot, product, rules, feedback, attempt, out_dir):
         ref = self.brief.references.get(shot.reference) if shot.reference else None
         prompt, constraints = self.build_prompt(shot, product, ref, rules, feedback)
+        raw = os.path.join(out_dir, f'{shot.id}_a{attempt}.raw.png')
+        out = os.path.join(out_dir, f'{shot.id}_a{attempt}.png')
+        if os.path.exists(out):  # --resume: кадр уже сгенерирован и оплачен в прошлый раз
+            self.log.event(self.name, shot.id, 'reused', attempt=attempt, path=out)
+            return out, {'raw_size': list(Image.open(out).size), 'reused': True}
+        # если есть <raw>.task — задача оплачена до сбоя и бэкенд её только скачает; в журнал она не попала,
+        # поэтому её стоимость учитывается здесь (один раз)
         usd = self.budget.reserve('frame', self.backend.name)
         req = {'shot': shot.id, 'attempt': attempt, 'prompt': prompt, 'constraints': constraints,
                'photos': product.photos, 'reference': ref and ref['path'], 'attributes': product.attributes,
                'width': self.brief.width, 'height': self.brief.height}
-        raw = os.path.join(out_dir, f'{shot.id}_a{attempt}.raw.png')
-        info = self.timed(shot.id, self.backend.generate, req, raw)
+        try:
+            info = self.timed(shot.id, self.backend.generate, req, raw)
+        except Exception:
+            if os.path.exists(raw + '.task'):  # задача создана — деньги ушли, даже если скачать не удалось
+                self.log.add_cost(usd)
+            raise
         self.log.add_cost(usd)
-        out = os.path.join(out_dir, f'{shot.id}_a{attempt}.png')
         im = Image.open(raw).convert('RGB')
         if im.size != (self.brief.width, self.brief.height):
             im = cover(im, self.brief.width, self.brief.height)
@@ -42,6 +52,8 @@ class FrameAgent(Agent):
         if os.path.exists(raw + '.mock.json'):
             os.replace(raw + '.mock.json', out + '.mock.json')
         os.remove(raw)
-        self.log.event(self.name, shot.id, 'generated', attempt=attempt, path=out, cost_usd=usd,
+        if os.path.exists(raw + '.task'):
+            os.replace(raw + '.task', out + '.task')
+        self.log.event(self.name, shot.id, 'generated', attempt=attempt, path=out, cost_usd=usd, task_id=info.get('task_id'),
                        rules=[r['id'] for r in rules], constraints=constraints, prompt=prompt, raw_size=info.get('raw_size'))
         return out, info
