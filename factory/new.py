@@ -21,7 +21,9 @@ SCHEMA = {
             'photos': {'type': 'array', 'items': {'type': 'integer'}, 'description': 'indices of photos showing this product, best packshot first'},
             'tags': {'type': 'array', 'items': {'type': 'string'}, 'description': 'kebab-case, most specific first, e.g. earring-stud, earring'},
             'attributes': {'type': 'object', 'additionalProperties': {'type': 'string'},
-                           'description': '3-5 visually checkable attributes that generators tend to break (type, metal, stone, shape, color); snake_case values'},
+                           'description': '3-5 visually checkable attributes of ONE item that generators tend to break (type, metal, finish, stone, shape, color); '
+                                          'never attributes that depend on composition or how many items are in frame (pair, symmetry, count, position); '
+                                          'snake_case values'},
             'vocab': {'type': 'object', 'additionalProperties': {'type': 'array', 'items': {'type': 'string'}},
                       'description': 'for each attribute: the correct value plus 2-3 typical wrong values and "other"'},
             'describe': {'type': 'object', 'additionalProperties': {'type': 'string'},

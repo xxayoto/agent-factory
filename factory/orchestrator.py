@@ -62,7 +62,7 @@ def plan(brief):
 
 
 class Orchestrator:
-    def __init__(self, brief, mode='mock', seed=0, memory_path=None, runs_dir=None, allow_spend=None, defect_rate=0.3, judge=None, resume=None):
+    def __init__(self, brief, mode='mock', seed=0, memory_path=None, runs_dir=None, allow_spend=None, defect_rate=0.3, judge=None, resume=None, rejudge=False):
         self.brief, self.mode = brief, mode
         self.memory = Memory(memory_path) if memory_path else Memory()
         self.runs_dir = os.path.abspath(runs_dir or os.path.join(ROOT, 'runs'))
@@ -108,12 +108,19 @@ class Orchestrator:
                       'judged': 0, 'judge_verdict_ok': 0, 'judge_attrs_exact': 0, 'judge_list_usd': 0.0}
         self.stopped_by_budget = False
         self.done = {}
+        if rejudge and self.log.previous:
+            # всё, что судья решал до этой метки, забывается; оплаченные кадры судятся заново, без генерации
+            self.log.event('orchestrator', '*', 'rejudge_start')
+            self.log.previous.append({'event': 'rejudge_start', 't': 0})
         self._restore()
 
     def _restore(self):
         """--resume: статистика и принятые кадры из журнала прерванного прогона; потраченное идёт в бюджет."""
-        for e in self.log.previous:
+        cut = max((i for i, e in enumerate(self.log.previous) if e['event'] == 'rejudge_start'), default=-1)
+        for i, e in enumerate(self.log.previous):
             ev = e['event']
+            if i < cut and (e.get('agent') in ('judge', 'memory') or ev in ('gave_up',)):
+                continue  # решения судьи до --rejudge не считаются
             if ev == 'generated':
                 self.stats['generated'] += 1
                 self.log.add_cost(e.get('cost_usd') or 0.0)
@@ -139,11 +146,12 @@ class Orchestrator:
             return self.done[shot.id]
         product = self.brief.products[shot.product]
         feedback = []
-        judged = {(e['task'], e['attempt']) for e in self.log.previous if e['event'] in ('approved', 'rejected')}
+        cut = max((i for i, e in enumerate(self.log.previous) if e['event'] == 'rejudge_start'), default=-1)
+        judged = {(e['task'], e['attempt']) for i, e in enumerate(self.log.previous) if e['event'] in ('approved', 'rejected') and i > cut}
         for attempt in range(1, self.brief.limits['max_retries'] + 2):
             if (shot.id, attempt) in judged:  # эта попытка уже отбракована в прерванном прогоне
-                feedback = next(e['mismatches'] for e in self.log.previous
-                                if e['event'] == 'rejected' and e['task'] == shot.id and e['attempt'] == attempt)
+                feedback = next(e['mismatches'] for i, e in enumerate(self.log.previous)
+                                if i > cut and e['event'] == 'rejected' and e['task'] == shot.id and e['attempt'] == attempt)
                 continue
             rules = self.memory.for_product(product)
             self.stats['rules_used'].update(r['id'] for r in rules)

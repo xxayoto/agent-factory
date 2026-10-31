@@ -14,6 +14,8 @@ VOCAB = {
     'stone': ['pearl', 'crystal', 'none'],
     'count': ['pair', 'single'],
 }
+NOT_VISIBLE = 'not_visible'
+
 DESCRIBE = {
     'earring_type': 'stud = sits on the earlobe, nothing hangs below; hoop = open ring; drop = something hangs below the stud',
     'stone': 'pearl = round white/cream bead with sheen; crystal = faceted or colored gem of any shape; none = only metal',
@@ -26,14 +28,16 @@ def schema(attributes, vocab, describe=DESCRIBE, scene=False, bbox=False):
     props = {}
     for a in attributes:
         v = vocab.get(a)
-        props[a] = {'type': 'string', 'enum': v} if v else {'type': 'string'}
-        if a in describe:
-            props[a]['description'] = describe[a]
+        # not_visible: признак нельзя проверить на этом кадре (на макро одного уха не видно пару) — это не брак
+        props[a] = {'type': 'string', 'enum': sorted(set(v) | {NOT_VISIBLE})} if v else {'type': 'string'}
+        props[a]['description'] = (describe.get(a, '') + f' Answer {NOT_VISIBLE} only if this cannot be judged from this shot.').strip()
     props['notes'] = {'type': 'string', 'description': 'one short sentence: anything wrong with the product'}
     req = list(attributes) + ['notes']
     if scene:
-        props['scene_ok'] = {'type': 'boolean', 'description': 'true only if the shot shows the scene described in SHOT BRIEF: '
-                             'composition, pose, how the product is shown (worn / held / lying), setting'}
+        props['scene_ok'] = {'type': 'boolean', 'description': 'false only if the shot breaks the CORE of the SHOT BRIEF: shot type '
+                             '(macro / portrait / product-only), how the product is shown (worn / held / lying / on podium), '
+                             'how many items must be visible, presence or absence of a model or hands. Do NOT judge light tone, '
+                             'minor props or wardrobe, exact crop percentages or style adjectives — those are not defects.'}
         props['scene_issue'] = {'type': 'string', 'description': 'if scene_ok is false: what differs from the brief, one sentence; else empty'}
         req += ['scene_ok', 'scene_issue']
     if bbox:

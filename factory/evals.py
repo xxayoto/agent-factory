@@ -139,7 +139,8 @@ def run_labeled(brief, labels_path, runs_dir, workers=3, ids=None, **judge_kw):
             got, err = {}, str(e)[:200]
         last = dict(insp.last)
         disputed = last.get('disputed') or {}
-        wrong = {a: got.get(a) for a, v in prod.attributes.items() if got.get(a) != v and a not in disputed}
+        wrong = {a: got.get(a) for a, v in prod.attributes.items()
+                 if got.get(a) != v and a not in disputed and got.get(a) != 'not_visible'}
         de = None
         if not err and prod.color_box and last.get('bbox'):
             b = last['bbox']

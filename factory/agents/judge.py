@@ -78,9 +78,12 @@ class JudgeAgent(Agent):
                     extra['truth_attrs_exact'] = all(observed.get(a) == truth.get(a) for a in exp)
                     extra['truth_verdict_ok'] = (truth == exp) == all(observed.get(a) == exp[a] for a in exp)
                 disputed = extra.get('disputed') or {}
+                unseen = [a for a in product.attributes if observed.get(a) == 'not_visible']
+                if unseen:
+                    extra['not_visible'] = unseen
                 for attr, exp in product.attributes.items():
                     got = observed.get(attr)
-                    if got != exp and attr not in disputed:
+                    if got != exp and attr not in disputed and got != 'not_visible':
                         mismatches.append({'attribute': attr, 'expected': exp, 'got': got,
                                            'hint': f'{attr} must be {exp}, previous attempt showed {got}'})
             return tech, mismatches

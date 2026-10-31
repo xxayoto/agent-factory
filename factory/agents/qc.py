@@ -86,7 +86,7 @@ class QCAgent(Agent):
             add('один слой текста (в монтаже нет карточек)', not any('_card' in s for s in timeline['sources']),
                 timeline['sources'], 'ролики и чистые кадры')
             bad_ends = [' '.join(w['t'] for w in p['words']) for p in timeline['phrases']
-                        if norm(p['words'][-1]['t']) in FUNC or len(p['words']) > 4]
+                        if norm(p['words'][-1]['t']) in FUNC or not norm(p['words'][-1]['t']) or len(p['words']) > 4]
             add('фразы без обрыва на служебном слове', not bad_ends, bad_ends, '≤ 4 слов, не служебное на конце')
             cuts = [a for a, _ in (timeline.get('segments') or [])][1:]
             crossing = [' '.join(w['t'] for w in p['words']) for p in timeline['phrases']
@@ -98,8 +98,10 @@ class QCAgent(Agent):
                 script = [w['t'] for w in timeline['words'] if norm(w['t'])]
                 e = wer(timeline.get('spoken') or script, [h['w'] for h in heard])
                 add('субтитры = звук (WER)', e <= self.lim['wer'], round(e, 3), f"≤ {self.lim['wer']}")
-                got, mis = align(' '.join(timeline.get('spoken') or script), heard)
-                drift = [abs(g['s'] - w['s']) for g, w in zip(got, timeline['words'])]
+                # тайминги сверяются по словам сценария без одиночных знаков: иначе «—» сдвигает пары на одно слово
+                planned = [w for w in timeline['words'] if norm(w['t'])]
+                got, mis = align(' '.join(w['t'] for w in planned), heard)
+                drift = [abs(g['s'] - w['s']) for g, w in zip(got, planned)]
                 if mis:
                     add('слова, которые звук и сценарий расходятся', True, mis[:10], 'для справки')
                 med = statistics.median(drift) if drift else 0.0

@@ -232,11 +232,25 @@ class TestJudgeEval(Base):
         self.assertEqual(max(z.size), 1024)
         self.assertEqual(z.getpixel((z.width // 2, z.height // 2)), (255, 0, 0))  # серьга в центре и крупно
 
+    def test_not_visible_is_not_a_reject(self):
+        from factory.agents.judge import JudgeAgent
+        b = self.brief()
+        class Blind:
+            name, last = 'stub', {}
+            def inspect(self, path, product, scene=None):
+                return {**product.attributes, 'stone': 'not_visible'}
+        j = JudgeAgent(RunLog(self.tmp, 'r', 'mock'), Blind(), b)
+        p = os.path.join(self.tmp, 'f.png')
+        Image.effect_noise((b.width, b.height), 60).convert('RGB').save(p)
+        ok, tech, mism, extra = j.review(b.shots[0], b.products['stud-pearl'], p, [b.width, b.height], [], 1)
+        self.assertTrue(ok)
+        self.assertEqual(extra['not_visible'], ['stone'])
+
     def test_claude_judge_schema(self):
         from factory.backends.claude_judge import VOCAB, schema
         sc = schema(['earring_type', 'metal', 'engraving'], VOCAB)
-        self.assertEqual(sc['properties']['earring_type']['enum'], ['stud', 'hoop', 'drop'])
-        self.assertEqual(sc['properties']['engraving'], {'type': 'string'})
+        self.assertEqual(sc['properties']['earring_type']['enum'], ['drop', 'hoop', 'not_visible', 'stud'])
+        self.assertEqual(sc['properties']['engraving']['type'], 'string')  # без словаря — свободная строка
         self.assertIn('notes', sc['required'])
 
 
@@ -291,6 +305,8 @@ class TestVoice(unittest.TestCase):
         self.assertTrue(all(len(p['words']) <= 4 for p in ph))
         self.assertTrue(all(norm(p['words'][-1]['t']) not in FUNC for p in ph))
         self.assertEqual(sum(len(p['words']) for p in ph), len(ws))
+        dash = [{'t': t, 's': i * 0.3, 'e': i * 0.3 + 0.25} for i, t in enumerate('Все детали — крупным планом'.split())]
+        self.assertTrue(all(w['t'] != '—' for p in phrases(dash) for w in p['words']))
 
 
 @unittest.skipUnless(have_ffmpeg(), 'нужен ffmpeg')
@@ -324,6 +340,18 @@ class TestQC(Base):
               'phrases': [{'words': [w('которое', 1.5), w('замечают', 1.8), w('подарок', 2.1)], 's': 1.5, 'e': 2.4}]}
         ok, checks = QCAgent(RunLog(self.tmp, 'qc', 'mock')).run(v, tl)
         self.assertFalse(next(c for c in checks if c['name'] == 'фраза не переходит через склейку')['ok'])
+
+    def test_sync_ignores_lone_dash(self):
+        from unittest import mock
+        from factory.agents import qc as qcmod
+        v = self.lavfi('s.mp4', 'testsrc', 2)
+        plan = [{'t': t, 's': s, 'e': s + 0.2} for t, s in (('Все', 0.0), ('детали', 0.3), ('—', 0.6), ('крупным', 0.7), ('планом', 1.0))]
+        heard = [{'w': w['t'], 's': w['s'], 'e': w['e']} for w in plan if w['t'] != '—']
+        tl = {'duration': 2.0, 'words': plan, 'phrases': [{'words': plan[:2], 's': 0, 'e': 0.5}], 'sources': ['a.png'],
+              'segments': [[0, 2.0]]}
+        with mock.patch.object(qcmod, 'transcribe_by_segments', return_value=heard), mock.patch.object(qcmod, 'probe', return_value=(2.0, {'video', 'audio'})):
+            ok, checks = qcmod.QCAgent(RunLog(self.tmp, 'q', 'mock')).run(v, tl)
+        self.assertEqual(next(c for c in checks if c['name'].startswith('синхрон'))['value'], 0.0)
 
     def test_mock_run_has_qc(self):
         o, m = self.run_mock(brief=self.brief(cards=False, videos=True, montage=True))

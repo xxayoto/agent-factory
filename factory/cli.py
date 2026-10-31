@@ -87,6 +87,7 @@ def main(argv=None):
     r.add_argument('--defect-rate', type=float, default=0.3, help='mock: вероятность дрейфа атрибута')
     r.add_argument('--judge', choices=['mock', 'claude', 'manual'], help='кто судит кадры (по умолчанию mock / из config)')
     r.add_argument('--resume', metavar='RUN_DIR', help='продолжить прерванный прогон: оплаченные кадры не генерируются заново')
+    r.add_argument('--rejudge', action='store_true', help='с --resume: заново судить все оплаченные кадры (после исправления судьи)')
     bn = sub.add_parser('bench')
     bn.add_argument('brief')
     bn.add_argument('--seeds', type=int, default=10)
@@ -144,7 +145,7 @@ def main(argv=None):
             print(f'  {t[0]:<12} {t[1]}')
         print(f"стоимость mock (симуляция): ${est['mock'][0]}–{est['mock'][1]}; live (оценка по config/prices.yaml): ${est['live'][0]}–{est['live'][1]}")
     elif a.cmd == 'run':
-        o = Orchestrator(brief, a.mode, a.seed, a.memory, a.runs, a.allow_spend, a.defect_rate, a.judge, a.resume)
+        o = Orchestrator(brief, a.mode, a.seed, a.memory, a.runs, a.allow_spend, a.defect_rate, a.judge, a.resume, a.rejudge)
         res = o.run()
         print(open(os.path.join(o.log.dir, 'report.md')).read())
         print('журнал:', o.log.dir)
