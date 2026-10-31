@@ -239,6 +239,8 @@ class Orchestrator:
             'rules_applied': len(self.stats['rules_used']), 'rules_learned': self.stats['learned'],
             'cards': len(cards), 'videos': len(videos),
             'videos_approved': sum(e['event'] == 'video_approved' for e in self.log.read()),
+            'cost_frames_usd': round(sum(e.get('cost_usd') or 0 for e in self.log.read() if e['event'] == 'generated'), 4),
+            'cost_videos_usd': round(sum(e.get('cost_usd') or 0 for e in self.log.read() if e['event'] == 'done' and e['agent'] == 'video'), 4),
             'montage_engine': self.montage_engine if montage else None, 'qc_ok': qc_ok,
             'qc_failed': next((e['failed'] for e in reversed(self.log.read()) if e['event'] in ('qc_passed', 'qc_failed')), None), 'montage': montage and os.path.relpath(montage, self.log.dir),
             'stopped_by_budget': self.stopped_by_budget, 'budget_usd': self.budget.limit,

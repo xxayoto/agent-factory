@@ -331,6 +331,38 @@ class TestQC(Base):
         self.assertTrue(os.path.exists(os.path.join(o.log.dir, 'out', 'montage.qc.json')))
 
 
+class TestNew(Base):
+    def test_build_brief_validates(self):
+        from factory import new
+        photos = new.list_photos(os.path.join(ROOT, 'examples', 'assets'))
+        draft = {'products': [{'id': 'Pearl Stud', 'photos': [3, 99], 'tags': ['Earring Stud'],
+                               'attributes': {'earring_type': 'stud', 'stone': 'pearl'},
+                               'vocab': {'earring_type': ['stud', 'drop', 'other']}, 'describe': {'stone': 'round white bead'}}],
+                 'shots': [{'id': 'ear close up', 'product': 'unknown', 'prompt': 'p', 'caption': 'Жемчуг на каждый день',
+                            'card_title': 'ЖЕМЧУГ', 'card_subtitle': 'гвоздики'}]}
+        path = new.write(new.build_brief(draft, photos, 'Demo Order', 'LUMA'), os.path.join(self.tmp, 'b.yaml'))
+        b = spec.load(path)
+        self.assertEqual(list(b.products), ['pearl-stud'])
+        self.assertEqual(b.shots[0].product, 'pearl-stud')  # неизвестный товар шота → первый товар
+        self.assertIn('drop', b.judge['vocab']['earring_type'])
+
+
+class TestWeekly(Base):
+    def test_only_live_and_last_resume(self):
+        import json
+        from factory import weekly
+        runs = os.path.join(self.tmp, 'runs')
+        os.makedirs(runs)
+        base = {'project': 'p', 'shots': 4, 'first_pass_yield': 1.0, 'cost_usd': 0.2, 'wall_sec': 100, 'videos': 0}
+        rows = [{**base, 'run_id': '20261101-100000-p-aaaa', 'mode': 'live', 'frames_generated': 4, 'frames_approved': 4, 'real_spend_usd': 0.17},
+                {**base, 'run_id': '20261101-100000-p-aaaa', 'mode': 'live', 'frames_generated': 4, 'frames_approved': 4, 'real_spend_usd': 0.45, 'videos': 1},
+                {**base, 'run_id': '20261101-110000-p-bbbb', 'mode': 'mock', 'frames_generated': 9, 'frames_approved': 4}]
+        with open(os.path.join(runs, 'index.jsonl'), 'w') as f:
+            f.write(''.join(json.dumps(r) + '\n' for r in rows))
+        s = weekly.summary(weekly.live_runs(runs))
+        self.assertEqual((s['runs'], s['frames'], s['usd'], s['videos']), (1, 4, 0.45, 1))
+
+
 class TestCard(unittest.TestCase):
     def test_logo_contrast(self):
         from factory.agents.card import logo_color

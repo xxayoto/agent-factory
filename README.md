@@ -3,13 +3,15 @@
 Агентная фабрика визуального контента: **YAML-бриф → кадры → судья → перегенерация → карточки → видео → монтаж с субтитрами**,
 с долговременной памятью правил и журналом метрик каждого прогона.
 
+> **Кейс с цифрами и разбором ошибок — [CASE.md](CASE.md).** Еженедельные отчёты по реальным заказам — [results/weekly/](results/weekly/).
+
 Собрана из скриптов, которыми я каждый день делаю коммерческий AI-визуал (Seedream / RunningHub / WaveSpeed, Pillow, ffmpeg, Remotion, faster-whisper),
 и превращает их из набора ручных шагов в управляемый конвейер с проверкой качества и цифрами.
 
 > Статус: **M1 готов**, **M2 в работе** — конвейер работает end-to-end в mock-режиме без платных вызовов;
 > судья — Claude (Sonnet) в headless-режиме, точность замерена: 36/36 кадров с известным браком ([results/judge-evals.md](results/judge-evals.md)).
 > **Первый live-прогон на реальном товаре:** 4/4 кадра Seedream 5 Pro приняты судьёй, вердикты совпали с ручной проверкой,
-> реально списано $0.173 ([results/live-runs.md](results/live-runs.md)). 20 тестов.
+> реально списано $0.173 ([results/live-runs.md](results/live-runs.md)). 32 теста.
 
 ## Архитектура
 
@@ -55,12 +57,14 @@ flowchart LR
 python3 -m pip install pyyaml pillow   # нужен ещё ffmpeg для видео и монтажа
 # для монтажа Remotion: pip install faster-whisper, Piper TTS (пути в config/local.yaml), cd remotion && npm install
 python3 examples/make_assets.py        # синтетические фото товаров (уже лежат в репо)
+python3 -m factory new <папка с фото> --project my-order --task "ТЗ клиента"   # черновик брифа
 python3 -m factory validate briefs/demo_earrings.yaml
 python3 -m factory plan briefs/demo_earrings.yaml
 python3 -m factory run briefs/demo_earrings.yaml          # mock по умолчанию
 python3 -m factory stats
 python3 -m factory memory
 python3 -m factory dashboard                              # runs/dashboard.html
+python3 -m factory weekly --since 2026-10-26 --save       # отчёт по live-прогонам → results/weekly/
 python3 -m factory run briefs/demo_earrings.yaml --judge claude          # судья — Claude Code (подписка)
 python3 -m factory eval-judge briefs/demo_earrings.yaml --judge claude   # замер точности судьи
 python3 -m factory rejudge <бриф> runs/<id>                              # перепроверить оплаченные кадры новым судьёй
@@ -164,7 +168,7 @@ judge: {model: sonnet, check_scene: true, max_delta_e: 30}   # + vocab/describe 
 | **M1** ✅ | 31.10 | Конвейер end-to-end в mock: бриф, оркестратор, 5 агентов, судья с перегенерацией, память, бюджет, журнал, `stats`, `bench` | 11 тестов, `specs/m1-mock-pipeline.md` |
 | M2 ✅ | 01.11 | ✅ судья на Claude с JSON-схемой и фото товара, замер точности (`eval-judge`), дашборд, CI-конфиг (`ci/github-tests.yml`), ✅ первый live-прогон ($0.173), `--resume` и устойчивость к сбоям. ✅ проверка сцены и цвета камня, `rejudge`. ✅ замер на 47 реальных кадрах (97,9 %), ✅ зум для мелких серёг и правило двух сигналов, ✅ видео (Hailuo 2.3, H3) и судья видео — **M2 закрыт** | `specs/m2-real-judge.md`; вердикт ≥ 90 % на 30–50 реальных кадрах |
 | M3 ✅ | 01.11 | Монтаж через Remotion + faster-whisper: озвучка Piper с циклом дублей, пословная подсветка, правка ослышек по сценарию; QC-агент монтажа (стоп-кадры, чёрные кадры, WER, синхрон, склейки, один слой текста) | монтаж live #1: QC пройден дважды подряд (`specs/m3-montage-remotion.md`) |
-| M4 | до 31.12 | Ежедневная эксплуатация: каждый заказ и тестовое — через фабрику; Claude Code в цикле (`brief-writer` → `factory run` → `judge`), CI с mock-тестами на GitHub; HTML-дашборд из `runs/index.jsonl` | ≥ 20 live-прогонов, ≥ 300 кадров |
+| M4 ◐ | до 31.12 | Ежедневная эксплуатация: каждый заказ и тестовое — через фабрику. ✅ `factory new` (черновик брифа из фото и ТЗ), ✅ `factory weekly` (отчёт только по live). Дальше: заказы, независимый замер судьи, CI | ≥ 20 live-прогонов, ≥ 300 кадров, ≥ 5 товаров (`specs/m4-daily-use.md`) |
 | M5 | январь | Кейс с цифрами: доля брака до/после памяти, $ и минуты на принятый кадр, время брифа против ручного процесса; публикация репо и разбора | статья + таблица из реальных `metrics.json` |
 
 ## Структура
@@ -179,6 +183,8 @@ factory/
   evals.py          замер судьи на кадрах с известной истиной, rejudge
   color.py          цвет камня: Lab, ΔE76
   dashboard.py      HTML-дашборд прогонов
+  new.py            черновик брифа из фото товара и ТЗ (Claude)
+  weekly.py         недельный отчёт по live-прогонам
   net.py            сертификаты macOS Keychain для HTTPS (VPN/прокси)
   agents/           frame, judge, card, video, montage, qc
   voice.py          озвучка Piper, тайминг слов Whisper, выравнивание по сценарию, фразы

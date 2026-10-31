@@ -7,6 +7,8 @@
   factory eval-judge BRIEF --judge claude   точность судьи на кадрах с известной истиной
   factory dashboard                    HTML-дашборд runs/dashboard.html
   factory rejudge BRIEF RUN_DIR        перепроверить кадры прогона текущим судьёй (без генерации)
+  factory new PHOTOS_DIR --task "ТЗ"   черновик брифа из фото товара (Claude по подписке)
+  factory weekly [--since YYYY-MM-DD]  отчёт по live-прогонам за период (цифры для кейса)
   factory stats                        сводка по всем прогонам (runs/index.jsonl)
   factory memory [list|reset]          выученные правила
 """
@@ -105,6 +107,18 @@ def main(argv=None):
     rj.add_argument('brief')
     rj.add_argument('run_dir')
     rj.add_argument('--judge', choices=['claude', 'manual', 'mock'], default='claude')
+    nw = sub.add_parser('new')
+    nw.add_argument('photos_dir')
+    nw.add_argument('--task', default='', help='текст ТЗ клиента')
+    nw.add_argument('--task-file', help='файл с ТЗ')
+    nw.add_argument('--project', required=True)
+    nw.add_argument('--brand')
+    nw.add_argument('--out', help='куда писать бриф (по умолчанию briefs/local/<project>.yaml — фото клиента в git не идут)')
+    wk = sub.add_parser('weekly')
+    wk.add_argument('--since')
+    wk.add_argument('--until')
+    wk.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
+    wk.add_argument('--save', action='store_true', help='записать в results/weekly/<неделя>.md')
     db = sub.add_parser('dashboard')
     db.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
     s = sub.add_parser('stats')
@@ -168,6 +182,34 @@ def main(argv=None):
             why = '; '.join(f"{m['attribute']}: {m['got']}" for m in r['mismatches'])
             print(f"  {r['shot']:<18} было {r['was']:<9} стало {r['now']:<9} ΔE {r['color_delta_e']}  {why}")
         print('журнал:', out)
+    elif a.cmd == 'new':
+        from . import new
+        photos = new.list_photos(a.photos_dir)
+        if not photos:
+            sys.exit(f'в {a.photos_dir} нет фото ({", ".join(new.IMG)})')
+        task = open(a.task_file).read() if a.task_file else a.task
+        draft = new.ask_claude(photos[:8], task)
+        out = a.out or os.path.join(ROOT, 'briefs', 'local', f'{new.slug(a.project)}.yaml')
+        new.write(new.build_brief(draft, photos[:8], a.project, a.brand), out)
+        b = spec.load(out)
+        tasks, est = plan(b)
+        print(f'черновик: {out}\nтоваров {len(b.products)}, шотов {len(b.shots)}; live: ${est["live"][0]}–{est["live"][1]}')
+        for pid, p in b.products.items():
+            print(f'  {pid}: {p.attributes}')
+    elif a.cmd == 'weekly':
+        import datetime as dt
+        from . import weekly
+        d = lambda x: dt.date.fromisoformat(x) if x else None
+        since, until = d(a.since), d(a.until)
+        md = weekly.render(weekly.summary(weekly.live_runs(a.runs, since, until)), since, until)
+        print(md)
+        if a.save:
+            wk_id = (until or dt.date.today()).strftime('%G-W%V')
+            out = os.path.join(ROOT, 'results', 'weekly', f'{wk_id}.md')
+            os.makedirs(os.path.dirname(out), exist_ok=True)
+            with open(out, 'w') as f:
+                f.write(md)
+            print('сохранено:', out)
     elif a.cmd == 'dashboard':
         from .dashboard import render
         print(render(a.runs))
