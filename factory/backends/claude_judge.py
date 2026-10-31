@@ -22,7 +22,7 @@ SYSTEM = ('You are a strict visual QA inspector for jewelry product shots. Descr
           'Never assume the product matches a description: generators often turn studs into drops, swap metals or stones.')
 
 
-def schema(attributes, vocab, describe=DESCRIBE, scene=False):
+def schema(attributes, vocab, describe=DESCRIBE, scene=False, bbox=False):
     props = {}
     for a in attributes:
         v = vocab.get(a)
@@ -35,10 +35,12 @@ def schema(attributes, vocab, describe=DESCRIBE, scene=False):
         props['scene_ok'] = {'type': 'boolean', 'description': 'true only if the shot shows the scene described in SHOT BRIEF: '
                              'composition, pose, how the product is shown (worn / held / lying), setting'}
         props['scene_issue'] = {'type': 'string', 'description': 'if scene_ok is false: what differs from the brief, one sentence; else empty'}
+        req += ['scene_ok', 'scene_issue']
+    if bbox:
         props['bbox'] = {'type': 'object', 'description': 'tight box around the center stone of the most visible earring, '
                          'fractions of image width/height (0..1)',
                          'properties': {k: {'type': 'number'} for k in ('x0', 'y0', 'x1', 'y1')}, 'required': ['x0', 'y0', 'x1', 'y1']}
-        req += ['scene_ok', 'scene_issue', 'bbox']
+        req += ['bbox']
     return {'type': 'object', 'properties': props, 'required': req}
 
 
@@ -70,7 +72,7 @@ class ClaudeInspector:
             prompt += f' Also check the scene against the SHOT BRIEF: "{scene.strip()}"'
         cmd = ['claude', '-p', prompt, *extra, '--model', self.model, '--output-format', 'json', '--tools', 'Read',
                '--allowedTools', 'Read', '--strict-mcp-config', '--no-session-persistence', '--system-prompt', SYSTEM,
-               '--json-schema', json.dumps(schema(attrs, self.vocab, self.describe, bool(scene)))]
+               '--json-schema', json.dumps(schema(attrs, self.vocab, self.describe, bool(scene), bool(product.color_box)))]
         p = subprocess.run(cmd, cwd=d, capture_output=True, text=True, timeout=self.timeout, stdin=subprocess.DEVNULL)
         try:
             j = json.loads(p.stdout)

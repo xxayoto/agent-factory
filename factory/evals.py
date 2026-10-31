@@ -114,3 +114,56 @@ def rejudge(brief, run_dir, judge='claude', **judge_kw):
                      'color_delta_e': extra.get('color_delta_e'), 'bbox': extra.get('bbox')})
     log._f.close()
     return rows, log.dir
+
+
+def run_labeled(brief, labels_path, runs_dir, workers=3, **judge_kw):
+    """Замер судьи на реальных кадрах с ручной разметкой: ok — верный ли товар на кадре по мнению человека."""
+    import yaml
+    from .color import delta_e, stone_lab
+    with open(labels_path) as f:
+        labels = yaml.safe_load(f)['items']
+    stamp = f'{dt.datetime.now():%Y%m%d-%H%M%S}'
+    out_dir = os.path.join(runs_dir, f'judge-labeled-{stamp}')
+    os.makedirs(out_dir, exist_ok=True)
+    lim = brief.judge.get('max_delta_e')
+
+    def one(it):
+        prod = brief.products[it['product']]
+        insp = backends.judge_inspector('claude', **judge_kw)
+        t = time.time()
+        try:
+            got, err = insp.inspect(it['path'], prod), None
+        except Exception as e:
+            got, err = {}, str(e)[:200]
+        last = dict(insp.last)
+        wrong = {a: got.get(a) for a, v in prod.attributes.items() if got.get(a) != v}
+        de = None
+        if not err and prod.color_box and last.get('bbox'):
+            b = last['bbox']
+            de = round(delta_e(stone_lab(prod.photos[0], prod.color_box), stone_lab(it['path'], [b[k] for k in ('x0', 'y0', 'x1', 'y1')])), 1)
+        flagged = bool(wrong) or (lim is not None and de is not None and de > lim)
+        return {'id': it.get('id'), 'product': it['product'], 'label_ok': it['ok'], 'judge_ok': not flagged, 'wrong': wrong,
+                'delta_e': de, 'notes': last.get('notes'), 'label_note': it.get('note', ''), 'error': err,
+                'sec': round(time.time() - t, 1), 'list_usd': last.get('list_usd')}
+
+    with ThreadPoolExecutor(workers) as pool:
+        rows = list(pool.map(one, labels))
+    ok_rows = [r for r in rows if not r['error']]
+    pos = [r for r in ok_rows if r['label_ok']]
+    neg = [r for r in ok_rows if not r['label_ok']]
+    usd = [r['list_usd'] for r in ok_rows if r['list_usd'] is not None]
+    m = {
+        'eval_id': f'judge-labeled-{stamp}', 'judge': 'claude', 'model': judge_kw.get('model'), 'labels': os.path.basename(labels_path),
+        'frames': len(rows), 'errors': len(rows) - len(ok_rows), 'defective': len(neg), 'clean': len(pos),
+        'verdict_accuracy': round(sum(r['label_ok'] == r['judge_ok'] for r in ok_rows) / len(ok_rows), 3) if ok_rows else None,
+        'defect_recall': round(sum(not r['judge_ok'] for r in neg) / len(neg), 3) if neg else None,
+        'false_reject_rate': round(sum(not r['judge_ok'] for r in pos) / len(pos), 3) if pos else None,
+        'attribute_accuracy': None,
+        'sec_per_frame': round(sum(r['sec'] for r in rows) / len(rows), 1),
+        'list_usd_per_frame': round(sum(usd) / len(usd), 4) if usd else None,
+    }
+    with open(os.path.join(out_dir, 'eval.json'), 'w') as f:
+        json.dump({'metrics': m, 'rows': rows}, f, ensure_ascii=False, indent=2)
+    with open(os.path.join(runs_dir, 'judge_evals.jsonl'), 'a') as f:
+        f.write(json.dumps(m, ensure_ascii=False) + '\n')
+    return m, rows, out_dir

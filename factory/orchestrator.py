@@ -142,7 +142,11 @@ class Orchestrator:
                 return None
             if not info.get('reused'):
                 self.stats['generated'] += 1
-            ok, tech, mism, extra = self.judge.review(shot, product, path, info.get('raw_size'), rules, attempt)
+            try:
+                ok, tech, mism, extra = self.judge.review(shot, product, path, info.get('raw_size'), rules, attempt)
+            except Exception as e:  # судья недоступен (лимит подписки, сеть): кадр не принимаем непроверенным
+                self.log.event('judge', shot.id, 'judge_error', attempt=attempt, path=path, error=f'{type(e).__name__}: {str(e)[:300]}')
+                return None
             if 'truth_verdict_ok' in extra:
                 self.stats['judged'] += 1
                 self.stats['judge_verdict_ok'] += extra['truth_verdict_ok']

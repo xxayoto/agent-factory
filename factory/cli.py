@@ -97,6 +97,7 @@ def main(argv=None):
     ev.add_argument('--n', type=int, default=12)
     ev.add_argument('--seed', type=int, default=0)
     ev.add_argument('--workers', type=int, default=3)
+    ev.add_argument('--labels', help='YAML с ручной разметкой реальных кадров (вместо синтетики)')
     ev.add_argument('--runs', default=os.path.join(ROOT, 'runs'))
     rj = sub.add_parser('rejudge')
     rj.add_argument('brief')
@@ -136,6 +137,16 @@ def main(argv=None):
     elif a.cmd == 'eval-judge':
         from . import evals
         kw = {'model': a.model} if a.judge == 'claude' else {}
+        if a.labels:
+            kw.update({k: v for k, v in (('vocab', brief.judge.get('vocab')), ('describe', brief.judge.get('describe'))) if v})
+            m, rows, out = evals.run_labeled(brief, a.labels, a.runs, a.workers, **kw)
+            for r in rows:
+                mark = 'OK ' if r['label_ok'] == r['judge_ok'] else 'ERR'
+                print(f"  {mark} {r['id']:<6} разметка {'чист' if r['label_ok'] else 'брак'} судья {'чист' if r['judge_ok'] else 'брак'} "
+                      f"ΔE {r['delta_e']} {r['wrong'] or ''} {r['error'] or ''}")
+            print(json.dumps(m, ensure_ascii=False, indent=2))
+            print('файлы:', out)
+            return
         m, rows, out = evals.run(brief, a.judge, a.n, a.runs, a.seed, a.workers, **kw)
         for r in rows:
             mark = 'ERR' if r['error'] else ('брак' if r['defect'] else 'чист')
