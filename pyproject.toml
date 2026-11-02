@@ -9,4 +9,4 @@ dependencies = ["pyyaml>=6", "pillow>=10.1"]
 factory = "factory.cli:main"
 
 [tool.setuptools]
-packages = ["factory", "factory.agents", "factory.backends"]
+packages = ["factory", "factory.agents", "factory.backends", "factory.jobs"]

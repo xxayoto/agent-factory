@@ -1,0 +1,163 @@
+# factory jobs scan — источники, профиль, правила фильтра (specs/m5-job-hunt.md).
+# Только публичные ленты без логина. Система ничего не отправляет: отклик делает человек.
+
+out_dir: ../job_search          # дайджест и журнал (с чужими контактами) — вне репозитория
+max_age_days: 14                # старше — не смотрим
+judge:
+  model: sonnet
+  batch: 8                      # лидов на один вызов claude -p
+  max_leads: 40                 # потолок оценок за скан (лимит подписки)
+draft:
+  model: sonnet
+  min_score: 4
+  max_drafts: 8
+
+sources:
+  telegram:                     # веб-превью t.me/s/<канал>
+    channels: [motionhunter, digital_jobster, rabota_v_ii, freelancce, workasap, normrabota, remote_ai_jobs]
+    pages: 2                    # ~20 постов на страницу
+  remoteok: true
+  weworkremotely:
+    - https://weworkremotely.com/categories/remote-design-jobs.rss
+    - https://weworkremotely.com/remote-jobs.rss
+  greenhouse: [heygen, descript]
+  ashby: [synthesia, elevenlabs, pika, hedra]
+  lever: []                     # формат поддержан; подходящих досок пока не нашёл
+
+profile:
+  name: Виктор Сергеев / Viktor Sergeev
+  role: AI Video Creator · Motion Designer · Video Editor
+  location: Remote (UTC+4), Russia
+  links:
+    portfolio: https://viktor-portfolio-2026.netlify.app/
+    github: https://github.com/xxayoto/agent-factory
+    telegram: '@xAy0t0'
+  skills: >-
+    Generative AI video and images: Seedream, Seedance, Kling, Higgsfield, Nano Banana, Wan, MiniMax, ComfyUI;
+    consistent characters across shots, face swap, voice cloning, lip-sync. Motion and 3D: After Effects, Cinema 4D + Redshift,
+    Unreal Engine, Photoshop. Editing: CapCut, ffmpeg, Remotion, sound design. Automation: Python, APIs, Claude Code, LLM-as-judge QA.
+    Formats: performance ads, AI UGC-style ads (AI characters, no own face), Reels/Shorts/TikTok, product motion, music video inserts,
+    marketplace cards for Wildberries/Ozon.
+  facts:                        # один факт — одна строка: модель склеивала соседние факты («86-секундный ролик набрал 1 млн»)
+    - 4+ years editing performance ads for mobile games and videos for YouTube channels (After Effects)
+    - built a persistent AI character pipeline; cost per usable video cut from 8 takes to 1 by turning failed takes into rules
+    - e-commerce marketplace card funnels (10 frames, brand overlays)
+    - 14-second ad for a clothing brand
+    - director of the music video 4IDOL «LIPS» (AI inserts); clips for a music label
+    - 86-second Shorts edited from 19 minutes of raw interview (Whisper-based selection, word-highlight subtitles in Remotion)
+    - his best-performing short video reached about 1M views (a different video from the 86-second Shorts)
+    - open-source agent-factory (github): LLM judge agrees with human review on 97.9% of 47 real frames; live run $0.36 of a $0.38 budget
+  not_doing: filming himself or appearing on camera, adult content, office or on-site work
+
+filter:
+  remote:                       # для лент, где удалёнка не гарантирована (Telegram, Greenhouse, Lever)
+    - удал[её]н
+    - дистанц
+    - \bremote\b
+    - из любого города
+    - work from anywhere
+    - фриланс|freelance
+    - проектн
+  remote_sources: [remoteok, weworkremotely]   # ленты только удалённых вакансий
+  skills_title_only: [remoteok, weworkremotely, greenhouse, lever, ashby]  # у досок компаний «video» есть в описании каждой вакансии
+  skills:                       # хотя бы одно совпадение; общие «AI», «креатив» не считаются — их слишком много у ML и маркетинга
+    - видео|video|ролик|reels|shorts|tiktok|рилс|\bugc\b|youtube
+    - моушн|motion|анимац|animat|after effects|cinema 4d|\bc4d\b
+    - монтаж|video editor|editing
+    - нейросет|генерац|generative (video|image|art|visual)
+    - seedance|kling|runway|midjourney|higgsfield|comfyui|stable diffusion|sora\b|\bveo\b
+    - карточ[ек]|маркетплейс|wildberries|\bwb\b|ozon|инфограф
+  drop:
+    - id: on_camera               # снимать себя, UGC в кадре
+      any:
+        - 'снима(ть|ться) себя'
+        - '(сам|сама|себя|лично|ваше лицо|своё лицо|с лицом|вы) в кадре'
+        - 'появ\w* в кадре'
+        - 'на камеру'
+        - 'сниматься'
+        - 'film yourself'
+        - 'on[- ]camera'
+        - 'ugc[- ]?(креатор|creator|блогер|blogger|мейкер)'
+        - 'talking head'
+        - 'распаковк'
+    - id: location                # US-only / EU-only
+      any:
+        - '\b(us|usa|u\.s\.)[- ]only'
+        - 'only (in )?the (us|usa|united states)'
+        - '(us|usa|united states)[- ]based (only|candidates)'
+        - 'must (be )?(based|located|reside) in the (us|usa|united states|eu|uk)'
+        - 'authori[sz]ed to work in the (us|united states)'
+        - '\beu[- ]only'
+        - 'eu (residents|citizens) only'
+        - 'only (eu|europe)\b'
+        - '(based|located) in (the )?(eu|europe) only'
+        - '^(us|usa|united states|europe|eu|emea|uk|canada)$'
+        - 'remote[ ,-]+(us|usa|united states|canada|uk)\b'
+        - '\bus remote\b'
+    - id: prepayment
+      any:
+        - 'предоплат'
+        - 'оплат(ить|ите) (обучение|курс|доступ)'
+        - 'вступительн'
+        - 'взнос'
+        - 'платн(ое|ый) обучени'
+        - 'registration fee'
+        - 'upfront fee'
+        - 'starter kit'
+    - id: adult
+      any: ['onlyfans', 'fansly', 'fanvue', '\badult\b', 'nsfw', '18\+', 'эроти', 'вебкам', 'webcam', 'интим']
+    - id: unpaid
+      any:
+        - 'неоплачиваем'
+        - 'без оплаты'
+        - 'бесплатно для портфолио'
+        - 'за отзыв'
+        - 'за опыт\b'
+        - 'волонт[её]р'
+        - '\bunpaid\b'
+        - 'volunteer'
+        - 'for exposure'
+        - 'revenue share only'
+    - id: free_test_content       # правило пользователя (02.11): тестовое = готовый контент под их канал → скам
+      all:
+        - ['тестов', 'test task', 'trial task', 'test assignment']
+        - ['для (нашего|их) (канала|аккаунта|проекта|бренда)', 'опубликуем', 'в наш(ем)? канал', '(наш|их) логотип', 'лого(тип)? в конце',
+           'под (наше|наш|их) гео', 'на (google |гугл |яндекс )?диск', 'for our (channel|account|page|brand)', 'we (will|may) (post|publish)',
+           'our logo']
+      unless: ['оплачиваем\w* тестов', 'тестов\w* (оплачива|платн)', 'paid (test|trial)']
+    - id: resume_post             # чужие резюме, а не вакансии
+      any:
+        - '^\W*#?(резюме|resume|ищу работу)'
+        - '#резюме'
+        - '#ищуработу'
+        - '^\W*(всем )?привет\W+(я|меня зовут)\b'
+        - '^\W*(я|меня зовут) [А-ЯЁ]\w+\s*[,—–-]'
+        - 'ищу (работу|проекты|заказы|новые проекты)'
+        - 'открыт\w* (к|для) (предложени|сотрудничеств|новых проект)'
+        - 'рассматриваю (предложения|проекты|вакансии)'
+    - id: office
+      any: ['только офис', 'on-?site only', '\bhybrid\b', 'гибрид']
+
+tone:                           # самоуничижение в письме — брак (повтор с замечанием)
+  banned:
+    - нет опыта
+    - небольшой опыт
+    - только начина
+    - новичок
+    - извините за беспокойство
+    - не уверен
+    - попробую
+    - "I('m| am) (just|only) a"
+    - (no|little|limited) experience
+    - beginner
+    - sorry to bother
+    - I hope (you|this)
+    - not sure (if|whether) I
+    - скажу честно
+    - не умею
+    - на базовом уровне
+    - не делал
+    - рассматриваю вакансию   # канцелярит — пишем живо
+    - готов обсудить детали
+    - тестов(ое|ый|ую|ого)        # бесплатное тестовое сами не предлагаем (правило 02.11)
+    - test (task|assignment|piece)

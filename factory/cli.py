@@ -11,6 +11,7 @@
   factory weekly [--since YYYY-MM-DD]  отчёт по live-прогонам за период (цифры для кейса)
   factory stats                        сводка по всем прогонам (runs/index.jsonl)
   factory memory [list|reset]          выученные правила
+  factory jobs scan                    вакансии из публичных лент → фильтр → судья → письма → дайджест (ничего не отправляет)
 """
 import argparse
 import json
@@ -128,6 +129,12 @@ def main(argv=None):
     m = sub.add_parser('memory')
     m.add_argument('action', choices=['list', 'reset'], nargs='?', default='list')
     m.add_argument('--memory', default=DEFAULT_PATH)
+    jb = sub.add_parser('jobs', help='поиск удалённой работы (specs/m5-job-hunt.md)')
+    jb.add_argument('action', choices=['scan'])
+    jb.add_argument('--config', help='по умолчанию config/jobs.yaml')
+    jb.add_argument('--out-dir', help='куда писать дайджест и журнал (по умолчанию out_dir из конфига)')
+    jb.add_argument('--no-judge', action='store_true', help='без Claude: только сбор и фильтр')
+    jb.add_argument('--no-draft', action='store_true', help='оценка без писем')
     a = ap.parse_args(argv)
     from .net import use_macos_keychain
     use_macos_keychain()
@@ -216,6 +223,16 @@ def main(argv=None):
         print(render(a.runs))
     elif a.cmd == 'stats':
         cmd_stats(a.runs, a.json)
+    elif a.cmd == 'jobs':
+        from .jobs import scan
+        cfg = scan.load_config(a.config or scan.CONFIG)
+        if a.out_dir:
+            cfg['out_dir'] = os.path.abspath(a.out_dir)
+        path, m = scan.scan(cfg, judge_on=not a.no_judge, draft_on=not (a.no_draft or a.no_judge))
+        print(f"собрано {m['fetched']} ({m['sources_ok']}/{m['sources']} источников), новых {m['new']}, прошли фильтр {m['passed']}, "
+              f"оценено {m['judged']}, оценка ≥ {m['min_score']}: {m['good']}, писем {m['drafts']}, {m['wall_sec']} с")
+        print('отсев:', ', '.join(f'{k} {v}' for k, v in sorted(m['dropped'].items(), key=lambda kv: -kv[1])))
+        print('дайджест:', path)
     elif a.cmd == 'memory':
         mem = Memory(a.memory)
         if a.action == 'reset':
